@@ -72,20 +72,27 @@ bash .harness/scripts/init.sh
 默认使用 v3 单任务文件存储：
 
 - `.harness/task-harness/index.json`：稳定路由索引，记录 `task_globs`，日常拆任务不修改它。
-- `.harness/task-harness/tasks/*.json`：权威任务源，每个任务一个独立 JSON 文件。
+- `.harness/task-harness/tasks/*.json` 与 `.harness/task-harness/tasks/**/*.json`：权威任务源，每个任务一个独立 JSON 文件；新任务默认按批次目录归档。
 - `.harness/task-harness/progress/YYYY-MM/*.md`：每次会话一个独立进度文件，避免多分支同时追加同一月度文件。
 - `.harness/task-harness/progress/latest.txt`：legacy 兼容快照，不作为权威进度源。
 - `.harness/task-harness/features/*.json`：只作为 v2/legacy bucket 读取兼容，不作为新任务默认写入目标。
 
 `.harness/feature_list.json` 只用于 legacy 项目兼容：如果旧项目已经存在该文件，可以继续作为旧 active bucket 视图；新项目不要主动创建它。
 
-任务 ID 不再使用 `feat-01` 这种全局递增序号。新任务 ID 由 UTC 时间戳、类型前缀、描述 slug 和短 hash 组成，例如：
+任务 ID 不再使用 `feat-01` 这种全局递增序号。新任务内部仍保留由 UTC 时间戳、类型前缀、描述 slug 和短 hash 组成的机器 ID，例如：
 
 ```text
 20260508T153012Z-feat-login-rate-limit-a3f9c2
 ```
 
-排序依赖 `priority`、`created_at`、`id`，不要把执行顺序编码进任务 ID。
+文件名和展示名使用批次号、任务号、中文标题和短 hash，例如：
+
+```text
+.harness/task-harness/tasks/B001-20260508T153012Z-音频转写/
+  T001-音频转写记录DDL和Mapper仓储-a3f9c2.json
+```
+
+任务 JSON 内会写入 `batch_id`、`batch_name`、`display_id`、`local_display_id`、`task_no`、`title` 和 `display_name`。日常定位优先使用 `display_id`（如 `B001-T001`），也兼容完整机器 ID。排序依赖 `priority`、`created_at`、`id`，不要把执行顺序编码进机器 ID。
 
 ## 4. 持续拆任务
 
@@ -103,7 +110,7 @@ python3 {{SKILL_PATH}}/scripts/decompose_tasks.py \
 
 - 用户指定数量时尽量满足；未指定时通常拆 4-8 个可执行任务。
 - 每个任务要能进入 `read task -> plan -> build -> qa -> fix -> mark_pass` 闭环。
-- 新任务默认新增到 `.harness/task-harness/tasks/`，不得为了追加任务而修改 `backlog-core.json` 或 `index.json`。
+- 新任务默认新增到 `.harness/task-harness/tasks/<批次目录>/`，不得为了追加任务而修改 `backlog-core.json` 或 `index.json`。
 - 回报新增任务 ID、优先级、建议执行顺序和下一步命令。
 
 旧 `feature_list.json` 或 v2 bucket 过大时，才考虑运行 legacy 重平衡工具：

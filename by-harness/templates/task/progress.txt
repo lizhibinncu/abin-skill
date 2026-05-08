@@ -33,7 +33,7 @@
   - {{重要发现 3}}
 
 下一步:
-  - 按优先级顺序完成 .harness/task-harness/tasks/*.json 中的功能
+  - 按优先级顺序完成 .harness/task-harness/tasks/*.json 与 .harness/task-harness/tasks/**/*.json 中的功能
 
 ----------------------------------------
 （后续会话在此追加，格式如下）

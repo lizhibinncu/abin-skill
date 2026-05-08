@@ -15,7 +15,7 @@
 2. 阅读根目录 `AGENTS.md`/`CLAUDE.md`（主工作流约束）
 3. 阅读 `.harness/docs/TASK-HARNESS.md`（任务追踪约束）
 4. 阅读 `.harness/task-harness/index.json`（定位 `task_globs`）
-5. 阅读对应单任务文件（如 `.harness/task-harness/tasks/<task-id>.json`；旧 `.harness/task-harness/features/*.json` 与 `.harness/feature_list.json` 仅作兼容查看）
+5. 阅读对应单任务文件（如 `.harness/task-harness/tasks/<batch-id>/<display-id>-<title>-<hash>.json`；旧 `.harness/task-harness/tasks/<task-id>.json`、`.harness/task-harness/features/*.json` 与 `.harness/feature_list.json` 仅作兼容查看）
 6. 阅读 `.harness/task-harness/progress/YYYY-MM/*.md`（`latest.txt` 只作 legacy 兼容快照）
 7. 选择优先级最高且 `passes=false` 的 1 个功能
 
@@ -31,7 +31,7 @@
 
 ## 任务清单修改规则
 
-- 对应单任务 JSON（例如 `.harness/task-harness/tasks/<task-id>.json`）中仅允许修改：
+- 对应单任务 JSON（例如 `.harness/task-harness/tasks/<batch-id>/<display-id>-<title>-<hash>.json`）中仅允许修改：
   - `status: todo|doing|done`
   - `passes: false -> true`（单元测试通过且 spec/contract 已落盘后）
 - 若存在 `.harness/feature_list.json` 或 `.harness/task-harness/features/*.json`，其为 legacy 兼容数据，常规不直接手改

@@ -28,7 +28,7 @@ santong-skills/
 - 自动任务定位：`.harness/scripts/ensure_task_branch.py`（按任务状态/提示词选出当前要做的 feature，不切分支）
 - 会话收口：`.harness/scripts/session_close.py`（会话日志 + 快照 + 会话状态）
 - 连续切任务：`.harness/scripts/task_switch.py`（当前分支自动续跑下个任务）
-- 持续拆任务：新任务增量写入 active bucket（仅当 legacy 项目已存在 `.harness/feature_list.json` 时才同步兼容镜像）
+- 持续拆任务：新任务默认按批次写入 `.harness/task-harness/tasks/<batch-id>/`，文件名带 `T001` 数字号和中文标题；legacy 项目可继续写旧 bucket
 - 每个任务闭环工件字段：`spec_path` / `contract_path` / `qa_report_path`
 - 门禁策略：单元测试通过且 spec/contract 已落盘后才可 `passes=true`，QA 默认非阻塞
 - Artifact Gate：已标记 `passes=true` 的 feature 必须存在 `spec_path` 与 `contract_path` 对应文件，否则 pre-completion hook 阻断完成
@@ -40,7 +40,7 @@ santong-skills/
 - 作用：维护 `active_bucket` 与各 bucket 文件路径映射，帮助 `init.sh`、`ensure_task_branch.py`、`decompose/rebalance` 快速定位“当前任务桶”
 - `.harness/task-harness/progress/latest.txt`：最新进度快照（给人读）
 - 作用：记录最近一次会话收口后的摘要（当前 feature、完成项、风险与下一步），用于新会话快速接续
-- 详细历史仍在：`.harness/task-harness/progress/YYYY-MM.md`
+- 详细历史仍在：`.harness/task-harness/progress/YYYY-MM/*.md`
 
 ### 一体化初始化
 
@@ -66,6 +66,7 @@ bash .harness/scripts/init.sh
 ```bash
 python3 by-harness/scripts/decompose_tasks.py \
   --target-dir "." \
+  --batch-name "权限与审计" \
   --item "新增用户权限矩阵" \
   --item "增加组织级审计日志"
 ```
@@ -81,7 +82,7 @@ python3 by-harness/scripts/rebalance_tasks.py --target-dir "."
 ```bash
 python3 .harness/scripts/session_close.py \
   --target-dir "." \
-  --feature-id "feat-03" \
+  --feature-id "B001-T001" \
   --outcome "in-progress" \
   --qa-score 72 \
   --note "已完成 plan/build，准备进入 fix"

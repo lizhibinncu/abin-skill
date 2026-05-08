@@ -271,12 +271,26 @@ def sample_feature_ids(features, limit: int = 12):
     ids = []
     for feat in features:
         feat_id = str(feat.get("id", "")).strip()
+        label = task_store.display_label(feat)
         if feat_id:
-            ids.append(feat_id)
+            ids.append(f"{label} ({feat_id})")
     ids = sorted(dict.fromkeys(ids))
     if len(ids) <= limit:
         return ", ".join(ids)
     return ", ".join(ids[:limit]) + f", ... (total {len(ids)})"
+
+
+def task_summary(feature) -> str:
+    if not feature:
+        return "n/a"
+    label = task_store.display_label(feature)
+    desc = str(feature.get("description", "")).strip()
+    title = str(feature.get("title", "")).strip()
+    compact_desc = re.sub(r"[\s\-:：；，。、！？“”‘’（）【】《》]+", "", desc)
+    compact_title = re.sub(r"[\s\-:：；，。、！？“”‘’（）【】《》]+", "", title)
+    if not desc or desc == title or (compact_title and compact_desc.startswith(compact_title)):
+        return label
+    return f"{label} - {desc}"
 
 
 def to_priority(value):
@@ -305,12 +319,12 @@ def build_session_entry(
     next_feature,
 ):
     now = datetime.now()
-    feat_id = str(feature.get("id", "n/a")) if feature else "n/a"
+    feat_id = task_store.display_label(feature) if feature else "n/a"
     feat_desc = str(feature.get("description", "未指定任务")) if feature else "未指定任务"
     qa_text = f"{qa_score:.1f}" if qa_score >= 0 else "n/a"
     note_lines = notes if notes else ["本轮按闭环推进任务，详见提交与 QA 报告。"]
     next_text = (
-        f"{next_feature.get('id')} ({next_feature.get('description')})"
+        task_summary(next_feature)
         if next_feature
         else "无（全部任务已完成）"
     )
@@ -365,11 +379,11 @@ def write_file_task_session_log(log_path: Path, entry: str) -> int:
 
 def build_latest_snapshot(feature, outcome: str, qa_score: float, total: int, passed: int, next_feature, log_path: Path):
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    feat_id = str(feature.get("id", "n/a")) if feature else "n/a"
+    feat_id = task_store.display_label(feature) if feature else "n/a"
     feat_desc = str(feature.get("description", "未指定任务")) if feature else "未指定任务"
     qa_text = f"{qa_score:.1f}" if qa_score >= 0 else "n/a"
     next_text = (
-        f"{next_feature.get('id')} - {next_feature.get('description')}"
+        task_summary(next_feature)
         if next_feature
         else "无（全部任务已完成）"
     )
@@ -392,26 +406,32 @@ def build_latest_snapshot(feature, outcome: str, qa_score: float, total: int, pa
 def build_session_meta(feature, next_feature, outcome: str, context_mode: str):
     closed_id = str(feature.get("id", "n/a")) if feature else "n/a"
     closed_desc = str(feature.get("description", "未指定任务")) if feature else "未指定任务"
+    closed_display = task_store.display_label(feature) if feature else "n/a"
     payload = {
         "context_mode": context_mode,
         "generated_by": "session_close.py",
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "closed_feature_id": closed_id,
+        "closed_feature_display": closed_display,
         "closed_feature_description": closed_desc,
         "outcome": outcome,
     }
     if next_feature:
         payload["next_feature_id"] = str(next_feature.get("id", ""))
+        payload["next_feature_display"] = task_store.display_label(next_feature)
         payload["next_feature_description"] = str(next_feature.get("description", ""))
     else:
         payload["next_feature_id"] = ""
+        payload["next_feature_display"] = ""
         payload["next_feature_description"] = "无（全部任务已完成）"
     return payload
 
 
 def safe_filename(value: str, fallback: str = "task") -> str:
-    text = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value or "").strip())
-    return text.strip("-") or fallback
+    text = re.sub(r"[\\/:*?\"<>|#%{}^~`\[\]\n\r\t：；，。、！？“”‘’（）【】《》]+", "-", str(value or "").strip())
+    text = re.sub(r"\s+", "-", text)
+    text = re.sub(r"-{2,}", "-", text)
+    return text.strip("-. _") or fallback
 
 
 def use_file_task_progress(workspace_dir: Path, entries) -> bool:
@@ -448,8 +468,10 @@ def bump_session_context(workspace_dir: Path, meta: dict, context_mode: str) -> 
         "reset_required": context_mode == SESSION_MODE_SOFT,
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "closed_feature_id": meta.get("closed_feature_id", ""),
+        "closed_feature_display": meta.get("closed_feature_display", ""),
         "closed_feature_description": meta.get("closed_feature_description", ""),
         "next_feature_id": meta.get("next_feature_id", ""),
+        "next_feature_display": meta.get("next_feature_display", ""),
         "next_feature_description": meta.get("next_feature_description", ""),
         "outcome": meta.get("outcome", ""),
     }
@@ -524,7 +546,7 @@ def main():
     if file_task_progress:
         monthly = datetime.now().strftime("%Y-%m")
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        feature_token = safe_filename(str(feature.get("id", "session")) if feature else "session")
+        feature_token = safe_filename(task_store.display_label(feature) if feature else "session")
         session_log_path = workspace_dir / "task-harness" / "progress" / monthly / f"{stamp}-{feature_token}.md"
     elif (workspace_dir / "task-harness" / "index.json").exists():
         monthly = datetime.now().strftime("%Y-%m")
@@ -598,7 +620,7 @@ def main():
     else:
         print("Soft reset activated: current session should treat previous feature context as stale.")
     if next_feature:
-        print(f"Next recommended task: {next_feature.get('id')} - {next_feature.get('description')}")
+        print(f"Next recommended task: {task_summary(next_feature)}")
     else:
         print("Next recommended task: none (all tasks are passed)")
 

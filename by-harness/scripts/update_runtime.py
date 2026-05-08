@@ -37,7 +37,8 @@ LEGACY_TASK_FILE_NAME = "task.json"
 LEGACY_SESSION_CONTEXT_FILE_NAME = "session-context.json"
 LEGACY_SESSION_BOUNDARY_FILE_NAME = "session-boundary.json"
 LEGACY_TASK_CONTRACT_FILE_NAME = "TASK-HARNESS.md"
-LATEST_RUNTIME_VERSION = "2.4.0"
+LATEST_RUNTIME_VERSION = "2.5.0"
+DEFAULT_TASK_GLOBS = ("task-harness/tasks/*.json", "task-harness/tasks/**/*.json")
 RUNTIME_SCRIPT_NAMES = (
     "init.sh",
     "session_close.py",
@@ -139,6 +140,7 @@ MIGRATIONS: dict[str, tuple[str, str]] = {
     "2.3.8": ("2.3.9", "migrate_runtime_versioning"),
     "2.3.9": ("2.3.10", "migrate_runtime_versioning"),
     "2.3.10": ("2.4.0", "migrate_file_tasks_storage"),
+    "2.4.0": ("2.5.0", "migrate_file_tasks_storage"),
 }
 
 
@@ -607,17 +609,26 @@ def migrate_file_tasks_index(harness_dir: Path, dry_run: bool) -> bool:
     if not isinstance(legacy_buckets, list):
         legacy_buckets = []
 
+    task_globs = []
+    existing_globs = existing.get("task_globs", [])
+    if isinstance(existing_globs, list):
+        task_globs = [str(item) for item in existing_globs if str(item).strip()]
+    for pattern in DEFAULT_TASK_GLOBS:
+        if pattern not in task_globs:
+            task_globs.append(pattern)
+
     next_index = {
         "version": "3",
         "mode": "file_tasks",
         "updated": datetime.now().strftime("%Y-%m-%d"),
-        "task_globs": ["task-harness/tasks/*.json"],
+        "task_globs": task_globs,
         "legacy_buckets": legacy_buckets,
         "views": {
             "generated_backlog": "task-harness/views/backlog-core.generated.json"
         },
         "notes": [
-            "权威任务源是 task_globs 指向的单任务 JSON 文件。",
+            "权威任务源是 task_globs 指向的单任务 JSON 文件，默认同时兼容 tasks/*.json 与 tasks/**/*.json。",
+            "新拆解任务默认按批次写入 task-harness/tasks/<批次目录>/<任务文件>.json。",
             "legacy_buckets 只用于读取旧 backlog-core/feature_list 任务，不作为新任务写入目标。",
         ],
     }

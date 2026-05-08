@@ -4,7 +4,7 @@ by-harness task decomposition helper.
 
 Append new tasks into task storage with harness-closed-loop defaults.
 Supports:
-- v3 mode: task-harness/tasks/<task-id>.json (default)
+- v3 mode: task-harness/tasks/<batch-id>/<display-id>-<title>-<hash>.json (default)
 - legacy mode: feature_list.json
 - sharded mode: task-harness/index.json + task-harness/features/*.json
 """
@@ -36,6 +36,11 @@ def parse_args():
     )
     parser.add_argument("--category", default="feature", help="任务分类，默认 feature")
     parser.add_argument("--id-prefix", default="feat", help="ID 前缀，默认 feat")
+    parser.add_argument(
+        "--batch-name",
+        default="",
+        help="本次拆解批次名称；默认从第一条任务描述中提取可读中文标题",
+    )
     parser.add_argument(
         "--start-priority",
         type=int,
@@ -86,12 +91,12 @@ def path_prefix_for_artifacts(workspace_dir: Path, target_dir: Path) -> str:
     return workspace_dir.relative_to(target_dir).as_posix()
 
 
-def artifact_paths(feature_id: str, prefix: str):
+def artifact_paths(artifact_key: str, prefix: str):
     base = f"{prefix}/" if prefix else ""
     return {
-        "spec_path": f"{base}docs/specs/{feature_id}.md",
-        "contract_path": f"{base}docs/contracts/{feature_id}.md",
-        "qa_report_path": f"{base}docs/qa/{feature_id}.md",
+        "spec_path": f"{base}docs/specs/{artifact_key}.md",
+        "contract_path": f"{base}docs/contracts/{artifact_key}.md",
+        "qa_report_path": f"{base}docs/qa/{artifact_key}.md",
     }
 
 
@@ -109,12 +114,32 @@ def ensure_artifact_fields(features, path_prefix: str):
     return updated
 
 
-def build_feature(item_desc: str, feature_id: str, category: str, priority: int, path_prefix: str):
-    paths = artifact_paths(feature_id, path_prefix)
+def build_feature(
+    item_desc: str,
+    feature_id: str,
+    category: str,
+    priority: int,
+    path_prefix: str,
+    *,
+    title: str = "",
+    display_id: str = "",
+    local_display_id: str = "",
+    task_no: int | None = None,
+    batch_meta: dict | None = None,
+    artifact_key: str = "",
+):
+    title = title or readable_title(item_desc)
+    display_name = f"{display_id} - {title}" if display_id else title
+    paths = artifact_paths(artifact_key or feature_id, path_prefix)
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    return {
+    feature = {
         "schema": TASK_SCHEMA,
         "id": feature_id,
+        "display_id": display_id or feature_id,
+        "local_display_id": local_display_id or display_id or feature_id,
+        "task_no": task_no,
+        "title": title,
+        "display_name": display_name,
         "category": category,
         "priority": priority,
         "description": item_desc,
@@ -124,7 +149,7 @@ def build_feature(item_desc: str, feature_id: str, category: str, priority: int,
         "contract_path": paths["contract_path"],
         "qa_report_path": paths["qa_report_path"],
         "steps": [
-            f"读取任务定义：task-harness/tasks 中 {feature_id} 的目标与约束",
+            f"读取任务定义：task-harness/tasks 中 {display_name} 的目标与约束",
             f"执行 plan：生成 {paths['spec_path']}",
             f"执行 contract：生成 {paths['contract_path']} 并明确验收标准与验证方式",
             "执行 build：按 contract 范围实现并完成自检（构建/单元测试/验收标准）",
@@ -137,6 +162,9 @@ def build_feature(item_desc: str, feature_id: str, category: str, priority: int,
         "created_at": now,
         "updated_at": now,
     }
+    if batch_meta:
+        feature.update(batch_meta)
+    return feature
 
 
 def slug(text: str, fallback: str = "task") -> str:
@@ -146,11 +174,59 @@ def slug(text: str, fallback: str = "task") -> str:
     return raw[:48].strip("-") or fallback
 
 
-def generate_file_task_id(item_desc: str, id_prefix: str, offset: int) -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    text_slug = slug(item_desc, "task")
+def safe_path_segment(text: str, fallback: str = "task", max_chars: int = 48) -> str:
+    raw = str(text or "").strip()
+    raw = re.sub(r"[\\/:*?\"<>|#%{}^~`\[\]\n\r\t：；，。、！？“”‘’（）【】《》]+", "-", raw)
+    raw = re.sub(r"\s+", "-", raw)
+    raw = re.sub(r"-{2,}", "-", raw)
+    raw = raw.strip("-. _")
+    return raw[:max_chars].strip("-. _") or fallback
+
+
+def readable_title(text: str, fallback: str = "任务") -> str:
+    raw = str(text or "").strip()
+    raw = re.split(r"[\n。；;]", raw, maxsplit=1)[0]
+    head = re.split(r"[：:]", raw, maxsplit=1)[0].strip()
+    if len(head) >= 4:
+        raw = head
+    return safe_path_segment(raw, fallback=fallback, max_chars=36)
+
+
+def next_batch_no(tasks_dir: Path) -> int:
+    max_no = 0
+    if tasks_dir.exists():
+        for child in tasks_dir.iterdir():
+            if not child.is_dir():
+                continue
+            match = re.match(r"^B0*(\d+)(?:-|$)", child.name, flags=re.IGNORECASE)
+            if match:
+                max_no = max(max_no, int(match.group(1)))
+    return max_no + 1
+
+
+def build_batch_context(tasks_dir: Path, batch_name: str, items: list[str]) -> dict:
+    batch_no = next_batch_no(tasks_dir)
+    batch_display_id = f"B{batch_no:03d}"
+    batch_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    batch_title = readable_title(batch_name or (items[0] if items else ""), fallback="任务批次")
+    batch_id = f"{batch_display_id}-{batch_stamp}-{batch_title}"
+    return {
+        "batch_no": batch_no,
+        "batch_display_id": batch_display_id,
+        "batch_name": batch_title,
+        "batch_id": batch_id,
+        "batch_stamp": batch_stamp,
+        "batch_dir": f"task-harness/tasks/{batch_id}",
+    }
+
+
+def generate_nonce(stamp: str, item_desc: str, offset: int) -> str:
     nonce_input = f"{stamp}|{offset}|{item_desc}|{uuid.uuid4().hex}"
-    nonce = hashlib.sha1(nonce_input.encode("utf-8")).hexdigest()[:6]
+    return hashlib.sha1(nonce_input.encode("utf-8")).hexdigest()[:6]
+
+
+def generate_file_task_id(item_desc: str, id_prefix: str, stamp: str, nonce: str) -> str:
+    text_slug = slug(item_desc, "task")
     return f"{stamp}-{slug(id_prefix, 'feat')}-{text_slug}-{nonce}"
 
 
@@ -292,14 +368,31 @@ def update_task_summary(workspace_dir: Path, all_features):
     dump_json(task_json, data)
 
 
-def append_progress_note(workspace_dir: Path, added_ids, bucket_id: str, mode: str):
+def append_progress_note(workspace_dir: Path, added_tasks, bucket_id: str, mode: str, batch_meta: dict | None = None):
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    added_lines = []
+    for task in added_tasks:
+        label = task.get("display_name") or task.get("id")
+        task_id = task.get("id", "")
+        source_path = task.get("path", "")
+        added_lines.append(f"  - {label} ({task_id})")
+        if source_path:
+            added_lines.append(f"    file: {source_path}")
+    added_text = "\n".join(added_lines) if added_lines else "  - 无"
+    batch_text = ""
+    if batch_meta:
+        batch_text = (
+            f"任务批次: {batch_meta.get('batch_display_id')} - {batch_meta.get('batch_name')}\n"
+            f"批次目录: {batch_meta.get('batch_dir')}\n"
+        )
     note = (
         "\n----------------------------------------\n"
         "任务拆解更新\n"
         "----------------------------------------\n"
         f"时间: {now}\n"
-        f"新增任务: {', '.join(added_ids)}\n"
+        f"{batch_text}"
+        "新增任务:\n"
+        f"{added_text}\n"
         f"任务桶: {bucket_id}\n"
         "说明: 新任务已按 harness 闭环模板生成（read task/plan/build/qa(non-blocking)/fix/mark_pass）。\n"
     )
@@ -307,7 +400,7 @@ def append_progress_note(workspace_dir: Path, added_ids, bucket_id: str, mode: s
     if mode in ("sharded", "file_tasks"):
         monthly = datetime.now().strftime("%Y-%m")
         if mode == "file_tasks":
-            safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", added_ids[0]) if added_ids else "tasks"
+            safe_id = safe_path_segment(str(batch_meta.get("batch_id", "")), fallback="tasks") if batch_meta else "tasks"
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             progress_path = workspace_dir / "task-harness" / "progress" / monthly / f"{stamp}-decompose-{safe_id}.md"
         else:
@@ -336,19 +429,48 @@ def main():
     repaired = 0
     legacy_synced = False
     added = []
+    batch_meta = None
 
     if store["mode"] == "file_tasks":
         existing_for_index = aggregate_features(workspace_dir, store)
         pri_start = next_priority_start(existing_for_index, args.start_priority)
         tasks_dir = store["tasks_dir"]
         tasks_dir.mkdir(parents=True, exist_ok=True)
+        batch_meta = build_batch_context(tasks_dir, args.batch_name, args.items)
+        batch_dir = tasks_dir / batch_meta["batch_id"]
+        batch_dir.mkdir(parents=True, exist_ok=False)
         for offset, item_desc in enumerate(args.items):
-            feature_id = generate_file_task_id(item_desc, args.id_prefix, offset)
+            task_no = offset + 1
+            local_display_id = f"T{task_no:03d}"
+            display_id = f"{batch_meta['batch_display_id']}-{local_display_id}"
+            title = readable_title(item_desc)
+            nonce = generate_nonce(batch_meta["batch_stamp"], item_desc, offset)
+            feature_id = generate_file_task_id(item_desc, args.id_prefix, batch_meta["batch_stamp"], nonce)
+            artifact_key = safe_path_segment(f"{display_id}-{title}", fallback=feature_id, max_chars=80)
             priority = pri_start + offset
-            feat = build_feature(item_desc, feature_id, args.category, priority, path_prefix)
-            task_path = tasks_dir / f"{feature_id}.json"
+            feat = build_feature(
+                item_desc,
+                feature_id,
+                args.category,
+                priority,
+                path_prefix,
+                title=title,
+                display_id=display_id,
+                local_display_id=local_display_id,
+                task_no=task_no,
+                batch_meta=batch_meta,
+                artifact_key=artifact_key,
+            )
+            file_name = f"{local_display_id}-{title}-{nonce}.json"
+            task_path = batch_dir / safe_path_segment(file_name, fallback=f"{local_display_id}-{nonce}.json", max_chars=96)
             dump_json(task_path, feat)
-            added.append(feature_id)
+            added.append(
+                {
+                    "id": feature_id,
+                    "display_name": feat["display_name"],
+                    "path": task_path.relative_to(workspace_dir).as_posix(),
+                }
+            )
     else:
         data = load_or_init_feature_doc(feature_path, workspace_dir)
         if not isinstance(data.get("features"), list):
@@ -367,9 +489,18 @@ def main():
         for offset, item_desc in enumerate(args.items):
             feature_id = f"{args.id_prefix}-{idx_start + offset:02d}"
             priority = pri_start + offset
-            feat = build_feature(item_desc, feature_id, args.category, priority, path_prefix)
+            feat = build_feature(
+                item_desc,
+                feature_id,
+                args.category,
+                priority,
+                path_prefix,
+                title=readable_title(item_desc),
+                display_id=feature_id,
+                local_display_id=feature_id,
+            )
             features.append(feat)
-            added.append(feature_id)
+            added.append({"id": feature_id, "display_name": feat["display_name"], "path": str(feature_path)})
 
         data["features"] = features
         dump_json(feature_path, data)
@@ -379,16 +510,19 @@ def main():
 
     all_features = aggregate_features(workspace_dir, store)
     update_task_summary(workspace_dir, all_features)
-    append_progress_note(workspace_dir, added, store["bucket_id"], store["mode"])
+    append_progress_note(workspace_dir, added, store["bucket_id"], store["mode"], batch_meta)
 
     print("Added tasks:")
-    for task_id in added:
-        print(f"  - {task_id}")
+    for task in added:
+        print(f"  - {task['display_name']}")
+        print(f"    id: {task['id']}")
+        print(f"    file: {task['path']}")
     if repaired > 0:
         print(f"Backfilled artifact fields on existing tasks: {repaired} fields updated")
     print(f"Target store: {store['mode']} / bucket={store['bucket_id']}")
     if store["mode"] == "file_tasks":
-        print(f"Task files created under: {store['tasks_dir']}")
+        print(f"Task batch: {batch_meta['batch_display_id']} - {batch_meta['batch_name']}")
+        print(f"Task files created under: {store['tasks_dir'] / batch_meta['batch_id']}")
     else:
         print(f"Feature file updated: {feature_path}")
     if legacy_synced:

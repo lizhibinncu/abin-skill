@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from task_store import load_task_entries, write_feature_update
+from task_store import display_label, feature_lookup_aliases, load_task_entries, normalize_lookup_value, write_feature_update
 
 HARNESS_DIR_NAME = ".harness"
 SESSION_MODE_SOFT = "soft_reset"
@@ -250,6 +250,11 @@ def extract_prompt_refs(prompt_text: str) -> tuple[list[str], list[str]]:
         if normalized not in task_ids:
             task_ids.append(normalized)
 
+    for match in re.findall(r"\bB\d{1,4}[-/]T\d{1,4}\b|\bT\d{1,4}\b|\b\d{3}\b", text, flags=re.IGNORECASE):
+        value = match.lower()
+        if value not in feature_ids:
+            feature_ids.append(value)
+
     for match in re.findall(r"\b(?:\d{8}T\d{6}Z-)?[a-z]{2,}(?:-[a-z0-9]{1,})+\b", text, flags=re.IGNORECASE):
         value = match.lower()
         if value not in feature_ids:
@@ -284,6 +289,10 @@ def semantic_score(prompt_text: str, feature: dict[str, Any]) -> int:
         [
             str(feature.get("task_id", "")).lower(),
             str(feature.get("id", "")).lower(),
+            str(feature.get("display_id", "")).lower(),
+            str(feature.get("local_display_id", "")).lower(),
+            str(feature.get("title", "")).lower(),
+            str(feature.get("display_name", "")).lower(),
             str(feature.get("description", "")).lower(),
         ]
     )
@@ -305,7 +314,8 @@ def pick_by_prompt(
             return sorted(matched, key=sort_key)[0], "explicit-task-id"
 
     for feature_id in feature_ids:
-        matched = [f for f in features if str(f.get("id", "")).lower() == feature_id]
+        target = normalize_lookup_value(feature_id)
+        matched = [f for f in features if target in feature_lookup_aliases(f)]
         if matched:
             return sorted(matched, key=sort_key)[0], "explicit-feature-id"
 
@@ -401,10 +411,10 @@ def main() -> int:
         return 0
 
     feature_id = str(selected.get("id") or "feat")
-    task_id = str(selected.get("task_id") or "")
+    task_id = str(selected.get("task_id") or selected.get("display_id") or "")
     status = str(selected.get("status") or "todo")
     branch = get_current_branch(repo)
-    print(f"[task] source={source} feature={feature_id} task_id={task_id} status={status}")
+    print(f"[task] source={source} feature={display_label(selected)} raw_id={feature_id} task_id={task_id} status={status}")
     print(f"[task] current_branch={branch} (branch switching disabled)")
 
     unmet = dependency_unmet(selected, task_state)

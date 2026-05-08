@@ -82,7 +82,7 @@ Codex 运行时：
 | 黄金原则 | `.harness/docs/golden-principles.md` | 不可妥协规则 |
 | 冲刺工作流 | `.harness/docs/sprint-workflow.md` | 流程文档 |
 | 契约模板 | `.harness/docs/contracts/TEMPLATE.md` | 冲刺契约结构 |
-| 任务清单（默认） | `.harness/task-harness/tasks/*.json` | v3 权威任务状态源，每个任务一个文件，适合多分支合并 |
+| 任务清单（默认） | `.harness/task-harness/tasks/*.json` / `.harness/task-harness/tasks/**/*.json` | v3 权威任务状态源，新任务按批次目录归档，每个任务一个文件，适合多分支合并 |
 | 任务清单（legacy 兼容） | `.harness/task-harness/features/*.json` / `.harness/feature_list.json` | 历史项目兼容读取，不作为新任务默认写入目标 |
 | 任务层契约（可选） | `.harness/docs/TASK-HARNESS.md` | task-harness 任务追踪规则 |
 

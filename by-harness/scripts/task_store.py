@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 HARNESS_DIR_NAME = ".harness"
 TASK_SCHEMA = "by-harness.task.v3"
-DEFAULT_TASK_GLOBS = ("task-harness/tasks/*.json",)
+DEFAULT_TASK_GLOBS = ("task-harness/tasks/*.json", "task-harness/tasks/**/*.json")
 
 
 class HarnessJsonError(RuntimeError):
@@ -88,6 +88,75 @@ def normalize_feature_id(feature_id: str) -> str:
     return text
 
 
+def normalize_lookup_value(value: str) -> str:
+    text = str(value or "").strip().lower().replace("\\", "/")
+    if "/" in text:
+        text = text.rsplit("/", 1)[-1]
+    if text.endswith(".json"):
+        text = text[:-5]
+    text = text.replace("｜", "-")
+    text = re.sub(r"\s+", "-", text)
+    text = re.sub(r"-{2,}", "-", text)
+    return normalize_feature_id(text.strip("-"))
+
+
+def display_label(feature: dict[str, Any]) -> str:
+    display_name = str(feature.get("display_name", "")).strip()
+    if display_name:
+        return display_name
+    display_id = str(feature.get("display_id", "")).strip()
+    title = str(feature.get("title", "") or feature.get("description", "")).strip()
+    if display_id and title:
+        return f"{display_id} - {title}"
+    return str(feature.get("id", "unknown")).strip() or "unknown"
+
+
+def feature_lookup_aliases(feature: dict[str, Any], source_path: Path | None = None) -> set[str]:
+    aliases: set[str] = set()
+    for key in (
+        "id",
+        "task_id",
+        "display_id",
+        "local_display_id",
+        "display_name",
+        "title",
+        "batch_id",
+    ):
+        value = str(feature.get(key, "") or "").strip()
+        if value:
+            aliases.add(value)
+
+    task_no = feature.get("task_no")
+    try:
+        task_no_int = int(task_no)
+    except (TypeError, ValueError):
+        task_no_int = 0
+    if task_no_int > 0:
+        aliases.update({str(task_no_int), f"{task_no_int:03d}", f"T{task_no_int}", f"T{task_no_int:03d}"})
+
+    batch_no = feature.get("batch_no")
+    try:
+        batch_no_int = int(batch_no)
+    except (TypeError, ValueError):
+        batch_no_int = 0
+    if batch_no_int > 0 and task_no_int > 0:
+        aliases.update(
+            {
+                f"B{batch_no_int}-T{task_no_int}",
+                f"B{batch_no_int:03d}-T{task_no_int:03d}",
+                f"B{batch_no_int:03d}/T{task_no_int:03d}",
+                f"{batch_no_int}-{task_no_int}",
+                f"{batch_no_int:03d}-{task_no_int:03d}",
+            }
+        )
+
+    if source_path is not None:
+        aliases.update({source_path.name, source_path.stem})
+        if source_path.parent.name:
+            aliases.add(f"{source_path.parent.name}/{source_path.stem}")
+    return {normalize_lookup_value(alias) for alias in aliases if normalize_lookup_value(alias)}
+
+
 def _task_globs_from_index(workspace_dir: Path) -> list[str]:
     index_path = workspace_dir / "task-harness" / "index.json"
     if not index_path.exists():
@@ -99,10 +168,14 @@ def _task_globs_from_index(workspace_dir: Path) -> list[str]:
     if not isinstance(index, dict):
         return list(DEFAULT_TASK_GLOBS)
 
+    globs: list[str] = []
     raw_globs = index.get("task_globs", [])
     if isinstance(raw_globs, list) and raw_globs:
-        return [str(item) for item in raw_globs if str(item).strip()]
-    return list(DEFAULT_TASK_GLOBS)
+        globs = [str(item) for item in raw_globs if str(item).strip()]
+    for pattern in DEFAULT_TASK_GLOBS:
+        if pattern not in globs:
+            globs.append(pattern)
+    return globs
 
 
 def task_file_paths(workspace_dir: Path) -> list[Path]:
@@ -205,13 +278,13 @@ def find_entry(workspace_dir: Path, feature_id: str) -> TaskEntry | None:
     if not feature_id:
         return None
     target_raw = str(feature_id).strip()
-    target_norm = normalize_feature_id(target_raw)
+    target_norm = normalize_lookup_value(target_raw)
     entries = load_task_entries(workspace_dir)
     for entry in entries:
         if str(entry.feature.get("id", "")).strip() == target_raw:
             return entry
     for entry in entries:
-        if normalize_feature_id(str(entry.feature.get("id", ""))) == target_norm:
+        if target_norm in feature_lookup_aliases(entry.feature, entry.source_path):
             return entry
     return None
 
@@ -236,4 +309,3 @@ def write_feature_update(entry: TaskEntry, mutator: Callable[[dict[str, Any]], b
     if changed:
         dump_json(entry.source_path, data)
     return changed
-

@@ -118,9 +118,13 @@ def bucket_paths(workspace: Path) -> list[Path]:
 def task_paths(workspace: Path) -> list[Path]:
     index_path = workspace / "task-harness" / "index.json"
     index = load_json(index_path)
-    patterns = ["task-harness/tasks/*.json"]
+    default_patterns = ["task-harness/tasks/*.json", "task-harness/tasks/**/*.json"]
+    patterns = list(default_patterns)
     if isinstance(index, dict) and isinstance(index.get("task_globs"), list):
         patterns = [str(item) for item in index["task_globs"] if str(item).strip()] or patterns
+    for default_pattern in default_patterns:
+        if default_pattern not in patterns:
+            patterns.append(default_pattern)
 
     paths: list[Path] = []
     seen = set()

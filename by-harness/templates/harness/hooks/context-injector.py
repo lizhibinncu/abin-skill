@@ -229,9 +229,13 @@ def task_source_paths(workspace: Path):
         except (json.JSONDecodeError, OSError, ValueError):
             index = None
 
-    patterns = ['task-harness/tasks/*.json']
+    default_patterns = ['task-harness/tasks/*.json', 'task-harness/tasks/**/*.json']
+    patterns = list(default_patterns)
     if isinstance(index, dict) and isinstance(index.get('task_globs'), list):
         patterns = [str(item) for item in index.get('task_globs', []) if str(item).strip()] or patterns
+    for default_pattern in default_patterns:
+        if default_pattern not in patterns:
+            patterns.append(default_pattern)
     for pattern in patterns:
         pattern_path = Path(pattern)
         if pattern_path.is_absolute():
@@ -354,10 +358,13 @@ def get_task_harness_state():
 
     if pending_sorted:
         next_feat = pending_sorted[0]
+        display_id = next_feat.get('display_id') or next_feat.get('id', 'unknown')
+        title = next_feat.get('title') or next_feat.get('description', '')
         state['next_feature'] = {
-            'id': next_feat.get('id', 'unknown'),
+            'id': display_id,
+            'raw_id': next_feat.get('id', 'unknown'),
             'priority': next_feat.get('priority', '?'),
-            'description': next_feat.get('description', ''),
+            'description': title,
         }
 
     return state
@@ -409,8 +416,8 @@ def get_session_context_notice():
             data = json.loads(boundary_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError, ValueError):
             data = {}
-        closed_id = str(data.get("closed_feature_id", "n/a"))
-        next_id = str(data.get("next_feature_id", "") or "n/a")
+        closed_id = str(data.get("closed_feature_display") or data.get("closed_feature_id", "n/a"))
+        next_id = str(data.get("next_feature_display") or data.get("next_feature_id", "") or "n/a")
         return (
             "Session mode: hard_new_session. "
             f"Boundary active (closed={closed_id}, next={next_id}). "
@@ -424,8 +431,8 @@ def get_session_context_notice():
             return "Session mode: soft_reset. Session context file exists but parse failed."
         epoch = data.get("epoch", "n/a")
         reset_required = bool(data.get("reset_required"))
-        closed_id = str(data.get("closed_feature_id", "n/a"))
-        next_id = str(data.get("next_feature_id", "") or "n/a")
+        closed_id = str(data.get("closed_feature_display") or data.get("closed_feature_id", "n/a"))
+        next_id = str(data.get("next_feature_display") or data.get("next_feature_id", "") or "n/a")
         if reset_required:
             return (
                 "Session mode: soft_reset. "

@@ -199,8 +199,8 @@ try:
 except Exception:
     print("  检测到 session-boundary.json，但解析失败")
 else:
-    closed_id = data.get("closed_feature_id", "n/a")
-    next_id = data.get("next_feature_id", "n/a")
+    closed_id = data.get("closed_feature_display") or data.get("closed_feature_id", "n/a")
+    next_id = data.get("next_feature_display") or data.get("next_feature_id", "n/a")
     print(f"  上一 feature 已收口: {closed_id}")
     print(f"  下一任务建议: {next_id}")
     print("  当前 init 视为新会话启动，将消费边界标记")
@@ -225,7 +225,7 @@ except Exception:
 else:
     epoch = data.get("epoch", "n/a")
     reset_required = bool(data.get("reset_required"))
-    closed_id = data.get("closed_feature_id", "n/a")
+    closed_id = data.get("closed_feature_display") or data.get("closed_feature_id", "n/a")
     print(f"  当前 context epoch: {epoch}")
     print(f"  最近收口 feature: {closed_id}")
     if reset_required:
