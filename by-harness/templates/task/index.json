@@ -1,17 +1,17 @@
 {
-  "version": "2",
-  "mode": "sharded",
-  "active_bucket": "backlog-core",
+  "version": "3",
+  "mode": "file_tasks",
   "updated": "{{YYYY-MM-DD}}",
-  "buckets": [
-    {
-      "id": "backlog-core",
-      "description": "默认任务桶（核心功能）",
-      "path": "task-harness/features/backlog-core.json"
-    }
+  "task_globs": [
+    "task-harness/tasks/*.json"
   ],
+  "legacy_buckets": [],
+  "views": {
+    "generated_backlog": "task-harness/views/backlog-core.generated.json"
+  },
   "notes": [
-    "优先读取 active_bucket 对应文件",
-    "若存在 .harness/feature_list.json，则作为兼容入口（可由脚本同步）"
+    "权威任务源是 task_globs 指向的单任务 JSON 文件。",
+    "新任务必须新增单独 task JSON，避免多分支同时修改共享 backlog 文件。",
+    "legacy_buckets 只用于读取旧 backlog-core/feature_list 任务，不作为新任务写入目标。"
   ]
 }

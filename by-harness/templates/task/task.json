@@ -20,9 +20,10 @@
     "files": {
       "legacy_feature_list": ".harness/feature_list.json",
       "task_index": ".harness/task-harness/index.json",
-      "feature_buckets": ".harness/task-harness/features/",
+      "task_files": ".harness/task-harness/tasks/",
+      "legacy_feature_buckets": ".harness/task-harness/features/",
       "progress_shards": ".harness/task-harness/progress/",
-      "progress_log": ".harness/task-harness/progress/latest.txt",
+      "progress_log": ".harness/task-harness/progress/YYYY-MM/*.md",
       "runtime_version": ".harness/config/runtime-version.json",
       "update_policy": ".harness/config/update-policy.json",
       "update_state": ".harness/config/update-state.json",
@@ -37,18 +38,18 @@
       "开始前先运行 bash .harness/scripts/init.sh 了解当前状态（legacy 项目可用 bash .harness/init.sh）",
       "先读取 AGENTS.md（Harness 主闭环规则）",
       "再读取 .harness/docs/TASK-HARNESS.md（任务层规则）",
-      "读取 .harness/task-harness/progress/YYYY-MM.md（兼容入口 .harness/task-harness/progress/latest.txt）获取上次进度",
+      "读取 .harness/task-harness/progress/YYYY-MM/*.md 获取上次进度；latest.txt 只作 legacy 兼容快照",
       "按 .harness/config/update-policy.json 在本地命令触发时定时检查远程运行时更新",
-      "读取 .harness/task-harness/index.json 与 active bucket 文件定位下一个未完成功能",
+      "读取 .harness/task-harness/index.json 与 task-harness/tasks/*.json 定位下一个未完成功能",
       "必须执行 plan/build/qa，单元测试通过且 spec/contract 已落盘后才可标记完成（QA 非阻塞）",
       "所有新增/修改函数、方法必须补齐中文注释（用途、参数、返回值、副作用）",
       "每个 feature 必须维护 spec_path/contract_path/qa_report_path",
-      "完成后仅更新 active bucket 中对应 feature 的 passes 字段",
+      "完成后仅更新对应单任务 JSON 中的 passes/status 字段",
       "标记 passes=true 前必须确认 spec_path 与 contract_path 文件真实存在",
-      "会话结束运行 .harness/scripts/session_close.py 追加会话日志，并刷新 .harness/task-harness/progress/latest.txt 快照",
+      "会话结束运行 .harness/scripts/session_close.py 写入独立会话日志，避免多分支同时修改同一进度文件",
       "继续下个任务可执行：python3 .harness/scripts/task_switch.py continue --target-dir .（仅当前分支）",
       "每次完成功能后 git commit",
-      "会话结束前写入 .harness/task-harness/progress/YYYY-MM.md（同时刷新 .harness/task-harness/progress/latest.txt 快照）",
+      "会话结束前写入 .harness/task-harness/progress/YYYY-MM/<timestamp>-<feature-id>.md",
       "同一任务最多修复 3 轮，仍失败则保持 passes=false 并继续下一个任务",
       "只修改 passes 字段，不要删除或编辑其他字段"
     ]
@@ -57,7 +58,7 @@
   "milestones": [
     {
       "name": "{{里程碑 1 名称}}",
-      "feature_ids": ["feat-01", "feat-02", "feat-03"],
+      "feature_ids": [],
       "status": "pending",
       "description": "{{里程碑描述}}"
     }
@@ -69,11 +70,8 @@
   ],
 
   "summary": {
-    "total_features": 3,
-    "categories": {
-      "foundation": 2,
-      "components": 1
-    },
-    "estimated_files_to_edit": 2
+    "total_features": 0,
+    "categories": {},
+    "estimated_files_to_edit": 0
   }
 }

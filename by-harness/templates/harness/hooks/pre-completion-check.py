@@ -35,7 +35,7 @@ CHECKLIST = [
 ]
 
 TASK_HARNESS_CHECKLIST = [
-    "12. 若本轮映射到 active bucket 任务，passes=true 前单元测试是否已通过？",
+    "12. 若本轮映射到 task-harness 任务，passes=true 前单元测试是否已通过？",
     "13. QA 报告是否已记录（非阻塞），进度日志是否已更新？",
 ]
 
@@ -115,23 +115,51 @@ def bucket_paths(workspace: Path) -> list[Path]:
     return deduped
 
 
+def task_paths(workspace: Path) -> list[Path]:
+    index_path = workspace / "task-harness" / "index.json"
+    index = load_json(index_path)
+    patterns = ["task-harness/tasks/*.json"]
+    if isinstance(index, dict) and isinstance(index.get("task_globs"), list):
+        patterns = [str(item) for item in index["task_globs"] if str(item).strip()] or patterns
+
+    paths: list[Path] = []
+    seen = set()
+    for pattern in patterns:
+        base = resolve_path(workspace, pattern)
+        if Path(pattern).is_absolute():
+            candidates = sorted(base.parent.glob(base.name))
+        else:
+            candidates = sorted(workspace.glob(pattern))
+        for path in candidates:
+            key = str(path)
+            if path.is_file() and key not in seen:
+                seen.add(key)
+                paths.append(path)
+    return paths
+
+
+def features_from_payload(data):
+    if not isinstance(data, dict):
+        return []
+    if isinstance(data.get("features"), list):
+        return [item for item in data["features"] if isinstance(item, dict)]
+    if data.get("id") or data.get("description"):
+        return [data]
+    return []
+
+
 def passed_feature_artifact_errors(workspace: Path) -> list[str]:
     errors = []
     seen = set()
-    for bucket_path in bucket_paths(workspace):
-        if not bucket_path.exists():
+    for feature_path in [*task_paths(workspace), *bucket_paths(workspace)]:
+        if not feature_path.exists():
             continue
-        data = load_json(bucket_path)
-        if not isinstance(data, dict):
-            continue
-        features = data.get("features", [])
-        if not isinstance(features, list):
-            continue
-        for feature in features:
-            if not isinstance(feature, dict) or not bool(feature.get("passes")):
+        data = load_json(feature_path)
+        for feature in features_from_payload(data):
+            if not bool(feature.get("passes")):
                 continue
             feature_id = str(feature.get("id", "unknown")).strip() or "unknown"
-            dedupe_key = (feature_id, str(bucket_path))
+            dedupe_key = (feature_id, str(feature_path))
             if dedupe_key in seen:
                 continue
             seen.add(dedupe_key)
@@ -141,7 +169,7 @@ def passed_feature_artifact_errors(workspace: Path) -> list[str]:
                 if not raw_path or not artifact_path.exists() or not artifact_path.is_file():
                     errors.append(
                         f"- {feature_id}: {field_name} missing -> {raw_path or '(empty)'} "
-                        f"(bucket: {bucket_path})"
+                        f"(task source: {feature_path})"
                     )
     return errors
 
@@ -170,7 +198,11 @@ def main():
     checklist = list(CHECKLIST)
     cwd = Path.cwd()
     workspace = find_workspace(cwd)
-    has_task_harness = (workspace / 'task-harness' / 'index.json').exists() or (workspace / 'feature_list.json').exists()
+    has_task_harness = (
+        (workspace / 'task-harness' / 'index.json').exists()
+        or (workspace / 'task-harness' / 'tasks').exists()
+        or (workspace / 'feature_list.json').exists()
+    )
     if has_task_harness:
         checklist.extend(TASK_HARNESS_CHECKLIST)
 

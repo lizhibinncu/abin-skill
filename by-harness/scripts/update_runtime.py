@@ -37,12 +37,13 @@ LEGACY_TASK_FILE_NAME = "task.json"
 LEGACY_SESSION_CONTEXT_FILE_NAME = "session-context.json"
 LEGACY_SESSION_BOUNDARY_FILE_NAME = "session-boundary.json"
 LEGACY_TASK_CONTRACT_FILE_NAME = "TASK-HARNESS.md"
-LATEST_RUNTIME_VERSION = "2.3.10"
+LATEST_RUNTIME_VERSION = "2.4.0"
 RUNTIME_SCRIPT_NAMES = (
     "init.sh",
     "session_close.py",
     "ensure_task_branch.py",
     "task_switch.py",
+    "task_store.py",
     "update_runtime.py",
     "upgrade_legacy_repo.py",
 )
@@ -137,6 +138,7 @@ MIGRATIONS: dict[str, tuple[str, str]] = {
     "2.3.7": ("2.3.8", "migrate_runtime_versioning"),
     "2.3.8": ("2.3.9", "migrate_runtime_versioning"),
     "2.3.9": ("2.3.10", "migrate_runtime_versioning"),
+    "2.3.10": ("2.4.0", "migrate_file_tasks_storage"),
 }
 
 
@@ -588,11 +590,103 @@ def migrate_runtime_versioning(harness_dir: Path, dry_run: bool) -> dict[str, in
     return stats
 
 
+def migrate_file_tasks_index(harness_dir: Path, dry_run: bool) -> bool:
+    index_path = harness_dir / "task-harness" / "index.json"
+    existing: dict[str, Any] = {}
+    if index_path.exists():
+        try:
+            payload = load_json(index_path)
+            if isinstance(payload, dict):
+                existing = payload
+        except (json.JSONDecodeError, OSError, ValueError):
+            existing = {}
+
+    legacy_buckets = existing.get("legacy_buckets")
+    if not isinstance(legacy_buckets, list):
+        legacy_buckets = existing.get("buckets", [])
+    if not isinstance(legacy_buckets, list):
+        legacy_buckets = []
+
+    next_index = {
+        "version": "3",
+        "mode": "file_tasks",
+        "updated": datetime.now().strftime("%Y-%m-%d"),
+        "task_globs": ["task-harness/tasks/*.json"],
+        "legacy_buckets": legacy_buckets,
+        "views": {
+            "generated_backlog": "task-harness/views/backlog-core.generated.json"
+        },
+        "notes": [
+            "权威任务源是 task_globs 指向的单任务 JSON 文件。",
+            "legacy_buckets 只用于读取旧 backlog-core/feature_list 任务，不作为新任务写入目标。",
+        ],
+    }
+    if existing == next_index:
+        return False
+    if dry_run:
+        print(f"[dry-run] migrate task index to file_tasks storage: {index_path}")
+    else:
+        dump_json(index_path, next_index)
+    return True
+
+
+def migrate_file_tasks_storage(harness_dir: Path, dry_run: bool) -> dict[str, int]:
+    stats = migrate_runtime_versioning(harness_dir, dry_run)
+    stats.setdefault("task_index_changed", 0)
+    stats.setdefault("dirs_created", 0)
+
+    for rel in ("task-harness/tasks", "task-harness/views"):
+        path = harness_dir / rel
+        if not path.exists():
+            if dry_run:
+                print(f"[dry-run] create dir: {path}")
+            else:
+                path.mkdir(parents=True, exist_ok=True)
+            stats["dirs_created"] += 1
+
+    task_path = task_json_path(harness_dir)
+    if task_path.exists():
+        try:
+            task_data = load_json(task_path)
+        except (json.JSONDecodeError, OSError, ValueError):
+            task_data = {}
+        if isinstance(task_data, dict):
+            harness = task_data.setdefault("harness", {})
+            if isinstance(harness, dict):
+                files = harness.setdefault("files", {})
+                if isinstance(files, dict):
+                    changed = False
+                    desired = {
+                        "task_files": ".harness/task-harness/tasks/",
+                        "legacy_feature_buckets": ".harness/task-harness/features/",
+                        "progress_shards": ".harness/task-harness/progress/",
+                    }
+                    for key, value in desired.items():
+                        if files.get(key) != value:
+                            files[key] = value
+                            changed = True
+                    if files.get("feature_buckets") == ".harness/task-harness/features/":
+                        files["feature_buckets"] = ".harness/task-harness/features/ (legacy read-only)"
+                        changed = True
+                    if changed:
+                        if dry_run:
+                            print(f"[dry-run] migrate task.json file_tasks pointers: {task_path}")
+                        else:
+                            dump_json(task_path, task_data)
+                        stats["task_json_changed"] = stats.get("task_json_changed", 0) + 1
+
+    if migrate_file_tasks_index(harness_dir, dry_run):
+        stats["task_index_changed"] += 1
+    return stats
+
+
 def run_migration(step_name: str, harness_dir: Path, dry_run: bool) -> dict[str, int]:
     if step_name == "migrate_remove_branch_switching":
         return migrate_remove_branch_switching(harness_dir, dry_run)
     if step_name == "migrate_runtime_versioning":
         return migrate_runtime_versioning(harness_dir, dry_run)
+    if step_name == "migrate_file_tasks_storage":
+        return migrate_file_tasks_storage(harness_dir, dry_run)
     raise RuntimeError(f"未知迁移步骤：{step_name}")
 
 

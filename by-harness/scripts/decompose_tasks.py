@@ -4,16 +4,20 @@ by-harness task decomposition helper.
 
 Append new tasks into task storage with harness-closed-loop defaults.
 Supports:
+- v3 mode: task-harness/tasks/<task-id>.json (default)
 - legacy mode: feature_list.json
 - sharded mode: task-harness/index.json + task-harness/features/*.json
 """
 
 import argparse
-import json
+import hashlib
 import re
 import sys
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
+
+from task_store import TASK_SCHEMA, detect_workspace_dir, dump_json, load_json, load_task_entries
 
 HARNESS_DIR_NAME = ".harness"
 
@@ -41,7 +45,7 @@ def parse_args():
     parser.add_argument(
         "--bucket",
         default="",
-        help="目标任务桶 ID（仅 sharded 模式有效；默认 active_bucket）",
+        help="目标 legacy/v2 任务桶 ID；默认写入 v3 单任务文件以降低多分支合并冲突",
     )
     parser.add_argument(
         "--use-legacy",
@@ -49,15 +53,6 @@ def parse_args():
         help="强制使用 legacy 模式（feature_list.json）",
     )
     return parser.parse_args()
-
-
-def load_json(path: Path):
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def dump_json(path: Path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def parse_id_index(feature_id: str, prefix: str) -> int:
@@ -116,17 +111,20 @@ def ensure_artifact_fields(features, path_prefix: str):
 
 def build_feature(item_desc: str, feature_id: str, category: str, priority: int, path_prefix: str):
     paths = artifact_paths(feature_id, path_prefix)
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     return {
+        "schema": TASK_SCHEMA,
         "id": feature_id,
         "category": category,
         "priority": priority,
         "description": item_desc,
         "file": None,
+        "status": "todo",
         "spec_path": paths["spec_path"],
         "contract_path": paths["contract_path"],
         "qa_report_path": paths["qa_report_path"],
         "steps": [
-            f"读取任务定义：active bucket 中 {feature_id} 的目标与约束",
+            f"读取任务定义：task-harness/tasks 中 {feature_id} 的目标与约束",
             f"执行 plan：生成 {paths['spec_path']}",
             f"执行 contract：生成 {paths['contract_path']} 并明确验收标准与验证方式",
             "执行 build：按 contract 范围实现并完成自检（构建/单元测试/验收标准）",
@@ -136,14 +134,24 @@ def build_feature(item_desc: str, feature_id: str, category: str, priority: int,
         ],
         "passes": False,
         "verification": "单元测试通过且 spec/contract 文件已落盘后才可判定通过；qa 报告为建议项，不阻塞流程",
+        "created_at": now,
+        "updated_at": now,
     }
 
 
-def detect_workspace_dir(target_dir: Path) -> Path:
-    harness_dir = target_dir / HARNESS_DIR_NAME
-    if harness_dir.exists():
-        return harness_dir
-    return target_dir
+def slug(text: str, fallback: str = "task") -> str:
+    raw = (text or fallback).strip().lower()
+    raw = re.sub(r"[^a-z0-9]+", "-", raw)
+    raw = raw.strip("-")
+    return raw[:48].strip("-") or fallback
+
+
+def generate_file_task_id(item_desc: str, id_prefix: str, offset: int) -> str:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    text_slug = slug(item_desc, "task")
+    nonce_input = f"{stamp}|{offset}|{item_desc}|{uuid.uuid4().hex}"
+    nonce = hashlib.sha1(nonce_input.encode("utf-8")).hexdigest()[:6]
+    return f"{stamp}-{slug(id_prefix, 'feat')}-{text_slug}-{nonce}"
 
 
 def resolve_bucket_feature_path(workspace_dir: Path, rel_path: str) -> Path:
@@ -167,6 +175,15 @@ def resolve_bucket_feature_path(workspace_dir: Path, rel_path: str) -> Path:
 
 
 def resolve_store(workspace_dir: Path, bucket_arg: str, use_legacy: bool):
+    if not use_legacy and not bucket_arg:
+        return {
+            "mode": "file_tasks",
+            "tasks_dir": workspace_dir / "task-harness" / "tasks",
+            "bucket_id": "file-tasks",
+            "index": None,
+            "index_path": workspace_dir / "task-harness" / "index.json",
+        }
+
     index_path = workspace_dir / "task-harness" / "index.json"
     if use_legacy or not index_path.exists():
         return {
@@ -226,6 +243,9 @@ def load_or_init_feature_doc(feature_path: Path, workspace_dir: Path):
 
 
 def aggregate_features(workspace_dir: Path, store):
+    if store["mode"] == "file_tasks":
+        return [entry.feature for entry in load_task_entries(workspace_dir)]
+
     if store["mode"] == "legacy":
         return load_json(store["feature_path"]).get("features", [])
 
@@ -284,9 +304,14 @@ def append_progress_note(workspace_dir: Path, added_ids, bucket_id: str, mode: s
         "说明: 新任务已按 harness 闭环模板生成（read task/plan/build/qa(non-blocking)/fix/mark_pass）。\n"
     )
 
-    if mode == "sharded":
+    if mode in ("sharded", "file_tasks"):
         monthly = datetime.now().strftime("%Y-%m")
-        progress_path = workspace_dir / "task-harness" / "progress" / f"{monthly}.md"
+        if mode == "file_tasks":
+            safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", added_ids[0]) if added_ids else "tasks"
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            progress_path = workspace_dir / "task-harness" / "progress" / monthly / f"{stamp}-decompose-{safe_id}.md"
+        else:
+            progress_path = workspace_dir / "task-harness" / "progress" / f"{monthly}.md"
     else:
         progress_path = workspace_dir / "progress.txt"
 
@@ -307,37 +332,50 @@ def main():
         print(f"Error: {exc}")
         sys.exit(1)
 
-    feature_path = store["feature_path"]
-    data = load_or_init_feature_doc(feature_path, workspace_dir)
-    if not isinstance(data.get("features"), list):
-        data["features"] = []
-
-    features = data["features"]
-    repaired = ensure_artifact_fields(features, path_prefix)
-
-    # Ensure id/priority are globally monotonic across all buckets in sharded mode.
-    existing_for_index = aggregate_features(workspace_dir, store)
-    if store["mode"] == "legacy":
-        existing_for_index = features
-
-    idx_start = next_start_index(existing_for_index, args.id_prefix)
-    pri_start = next_priority_start(existing_for_index, args.start_priority)
-
-    added = []
-    for offset, item_desc in enumerate(args.items):
-        feature_id = f"{args.id_prefix}-{idx_start + offset:02d}"
-        priority = pri_start + offset
-        feat = build_feature(item_desc, feature_id, args.category, priority, path_prefix)
-        features.append(feat)
-        added.append(feature_id)
-
-    data["features"] = features
-    dump_json(feature_path, data)
-
-    # Keep feature_list.json as compatibility view only when legacy file exists.
+    feature_path = store.get("feature_path")
+    repaired = 0
     legacy_synced = False
-    if store["mode"] == "sharded":
-        legacy_synced = sync_legacy_view(workspace_dir, data)
+    added = []
+
+    if store["mode"] == "file_tasks":
+        existing_for_index = aggregate_features(workspace_dir, store)
+        pri_start = next_priority_start(existing_for_index, args.start_priority)
+        tasks_dir = store["tasks_dir"]
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        for offset, item_desc in enumerate(args.items):
+            feature_id = generate_file_task_id(item_desc, args.id_prefix, offset)
+            priority = pri_start + offset
+            feat = build_feature(item_desc, feature_id, args.category, priority, path_prefix)
+            task_path = tasks_dir / f"{feature_id}.json"
+            dump_json(task_path, feat)
+            added.append(feature_id)
+    else:
+        data = load_or_init_feature_doc(feature_path, workspace_dir)
+        if not isinstance(data.get("features"), list):
+            data["features"] = []
+
+        features = data["features"]
+        repaired = ensure_artifact_fields(features, path_prefix)
+
+        existing_for_index = aggregate_features(workspace_dir, store)
+        if store["mode"] == "legacy":
+            existing_for_index = features
+
+        idx_start = next_start_index(existing_for_index, args.id_prefix)
+        pri_start = next_priority_start(existing_for_index, args.start_priority)
+
+        for offset, item_desc in enumerate(args.items):
+            feature_id = f"{args.id_prefix}-{idx_start + offset:02d}"
+            priority = pri_start + offset
+            feat = build_feature(item_desc, feature_id, args.category, priority, path_prefix)
+            features.append(feat)
+            added.append(feature_id)
+
+        data["features"] = features
+        dump_json(feature_path, data)
+
+        if store["mode"] == "sharded":
+            legacy_synced = sync_legacy_view(workspace_dir, data)
 
     all_features = aggregate_features(workspace_dir, store)
     update_task_summary(workspace_dir, all_features)
@@ -349,7 +387,10 @@ def main():
     if repaired > 0:
         print(f"Backfilled artifact fields on existing tasks: {repaired} fields updated")
     print(f"Target store: {store['mode']} / bucket={store['bucket_id']}")
-    print(f"Feature file updated: {feature_path}")
+    if store["mode"] == "file_tasks":
+        print(f"Task files created under: {store['tasks_dir']}")
+    else:
+        print(f"Feature file updated: {feature_path}")
     if legacy_synced:
         print(f"Legacy mirror synced: {workspace_dir / 'feature_list.json'}")
     print("Reminder: pass gate = unit tests; QA report is non-blocking.")

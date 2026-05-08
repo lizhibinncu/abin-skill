@@ -217,24 +217,119 @@ def resolve_task_feature_file(workspace: Path):
     return default_path, 'active_bucket'
 
 
+def task_source_paths(workspace: Path):
+    paths = []
+    seen = set()
+
+    index_path = workspace / 'task-harness' / 'index.json'
+    index = None
+    if index_path.exists():
+        try:
+            index = json.loads(index_path.read_text(encoding='utf-8'))
+        except (json.JSONDecodeError, OSError, ValueError):
+            index = None
+
+    patterns = ['task-harness/tasks/*.json']
+    if isinstance(index, dict) and isinstance(index.get('task_globs'), list):
+        patterns = [str(item) for item in index.get('task_globs', []) if str(item).strip()] or patterns
+    for pattern in patterns:
+        pattern_path = Path(pattern)
+        if pattern_path.is_absolute():
+            candidates = sorted(pattern_path.parent.glob(pattern_path.name))
+        else:
+            candidates = sorted(workspace.glob(pattern))
+        for path in candidates:
+            key = str(path)
+            if path.is_file() and key not in seen:
+                seen.add(key)
+                paths.append((path, 'file_tasks'))
+
+    if isinstance(index, dict):
+        buckets = index.get('legacy_buckets', index.get('buckets', []))
+        if isinstance(buckets, list):
+            for bucket in buckets:
+                if not isinstance(bucket, dict):
+                    continue
+                raw_path = str(bucket.get('path', '') or '').strip()
+                if not raw_path:
+                    continue
+                candidate = workspace / raw_path
+                if not candidate.exists() and raw_path.startswith(f'{HARNESS_DIR_NAME}/'):
+                    candidate = workspace / raw_path[len(HARNESS_DIR_NAME) + 1 :]
+                key = str(candidate)
+                if key not in seen:
+                    seen.add(key)
+                    paths.append((candidate, 'legacy_bucket'))
+
+    for path, source in [
+        (workspace / 'feature_list.json', 'legacy_feature_list'),
+        (workspace / 'task-harness' / 'features' / 'backlog-core.json', 'legacy_bucket'),
+    ]:
+        key = str(path)
+        if key not in seen:
+            seen.add(key)
+            paths.append((path, source))
+    return paths
+
+
+def features_from_task_payload(data):
+    if not isinstance(data, dict):
+        return []
+    if isinstance(data.get('features'), list):
+        return [item for item in data['features'] if isinstance(item, dict)]
+    if data.get('id') or data.get('description'):
+        return [data]
+    return []
+
+
+def load_all_task_features(workspace: Path):
+    features = []
+    seen_ids = set()
+    source = ''
+    for path, source_name in task_source_paths(workspace):
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding='utf-8'))
+        except (json.JSONDecodeError, OSError, ValueError):
+            continue
+        for feature in features_from_task_payload(data):
+            feature_id = str(feature.get('id', '') or '').strip()
+            key = feature_id.lower()
+            if key and key in seen_ids:
+                continue
+            if key:
+                seen_ids.add(key)
+            features.append(feature)
+            source = source or source_name
+    return features, source
+
+
+def to_priority(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 10**9
+
+
+def has_progress_shards(workspace: Path):
+    progress = workspace / 'task-harness' / 'progress'
+    if (progress / 'latest.txt').exists() or (workspace / 'progress.txt').exists():
+        return True
+    if not progress.exists():
+        return False
+    return any(path.is_file() and path.suffix == '.md' for path in progress.glob('*/*.md'))
+
+
 def get_task_harness_state():
-    """Scan task-harness state from active bucket (or legacy mirror when present)."""
+    """Scan task-harness state from v3 task files plus legacy buckets."""
     state = {}
     cwd = Path.cwd()
     workspace = cwd / HARNESS_DIR_NAME if (cwd / HARNESS_DIR_NAME).exists() else cwd
     workspace_label = f"{HARNESS_DIR_NAME}/" if workspace != cwd else ""
-    feature_path, source = resolve_task_feature_file(workspace)
 
-    if not feature_path.exists():
-        return state
-
-    try:
-        data = json.loads(feature_path.read_text(encoding='utf-8'))
-    except (json.JSONDecodeError, OSError, ValueError):
-        return state
-
-    features = data.get('features', [])
-    if not isinstance(features, list):
+    features, source = load_all_task_features(workspace)
+    if not features:
         return state
 
     total = len(features)
@@ -243,7 +338,8 @@ def get_task_harness_state():
     pending_sorted = sorted(
         pending,
         key=lambda feat: (
-            int(feat.get('priority', 10**9)) if str(feat.get('priority', '')).isdigit() else 10**9,
+            to_priority(feat.get('priority')),
+            str(feat.get('created_at', '')),
             feat.get('id', ''),
         ),
     )
@@ -252,9 +348,9 @@ def get_task_harness_state():
     state['passed_features'] = passed
     state['pending_features'] = max(total - passed, 0)
     state['has_task_contract'] = (workspace / 'docs' / 'TASK-HARNESS.md').exists() or (workspace / 'TASK-HARNESS.md').exists()
-    state['has_progress_log'] = (workspace / 'task-harness' / 'progress' / 'latest.txt').exists() or (workspace / 'progress.txt').exists()
+    state['has_progress_log'] = has_progress_shards(workspace)
     state['workspace_label'] = workspace_label
-    state['task_source'] = source
+    state['task_source'] = source or 'unknown'
 
     if pending_sorted:
         next_feat = pending_sorted[0]
@@ -389,7 +485,7 @@ def main():
         if not task_state.get('has_progress_log'):
             parts.append(
                 'Warning: task harness state exists but '
-                f"{task_state.get('workspace_label', '')}task-harness/progress/latest.txt is missing."
+                f"{task_state.get('workspace_label', '')}task-harness/progress/YYYY-MM/*.md is missing."
             )
     if should_inject_sql_orm_rules(prompt_text):
         parts.append(SQL_ORM_RULE_CARD)

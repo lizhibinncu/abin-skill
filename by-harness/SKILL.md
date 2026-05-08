@@ -23,8 +23,8 @@ read task -> plan -> build -> qa -> fix -> mark_pass -> session_close
 | 用户意图 | 常见说法 | 主要动作 |
 |---|---|---|
 | 初始化 harness | “初始化”“用 by-harness 初始化这个仓库” | 运行 `scripts/scaffold.py`，再提示执行或执行 `.harness/scripts/init.sh` |
-| 持续拆任务 | “持续拆任务”“拆 5 个任务”“把这个主题拆一下” | 运行 `scripts/decompose_tasks.py`，写入 active bucket |
-| 执行某个任务 | “执行 feat-03”“继续当前任务” | 读取任务，按 plan/build/qa/fix/mark_pass 闭环推进 |
+| 持续拆任务 | “持续拆任务”“拆 5 个任务”“把这个主题拆一下” | 运行 `scripts/decompose_tasks.py`，默认新增 v3 单任务文件 |
+| 执行某个任务 | “执行某个任务 ID”“继续当前任务” | 读取任务，按 plan/build/qa/fix/mark_pass 闭环推进 |
 | 会话收口 | “收口”“保存进度”“session_close” | 运行 `.harness/scripts/session_close.py` |
 | 自动续跑 | “继续下个任务”“自动续跑” | 运行 `.harness/scripts/task_switch.py continue --target-dir .` |
 | 老仓库升级 | “升级 harness”“同步 runtime”“更新脚手架” | 运行 `scripts/update_runtime.py`，优先备份与版本化迁移 |
@@ -53,7 +53,7 @@ python3 {{SKILL_PATH}}/scripts/scaffold.py \
 - Codex / Claude 配置：`.codex/`、`.claude/`
 - Harness 工作区：`.harness/config/`、`.harness/docs/`、`.harness/scripts/`、`.harness/task-harness/`
 - 任务索引：`.harness/task-harness/index.json`
-- 默认任务桶：`.harness/task-harness/features/backlog-core.json`
+- 默认任务目录：`.harness/task-harness/tasks/`
 - 运行时版本：`.harness/config/runtime-version.json`
 - 更新策略：`.harness/config/update-policy.json`
 
@@ -69,14 +69,23 @@ bash .harness/scripts/init.sh
 
 ## 3. 任务存储模型
 
-默认使用分片任务存储：
+默认使用 v3 单任务文件存储：
 
-- `.harness/task-harness/index.json`：路由索引，记录 active bucket。
-- `.harness/task-harness/features/*.json`：任务分片。
-- `.harness/task-harness/progress/latest.txt`：最新会话快照，给新会话快速接续。
-- `.harness/task-harness/progress/YYYY-MM.md`：按月追加的会话历史。
+- `.harness/task-harness/index.json`：稳定路由索引，记录 `task_globs`，日常拆任务不修改它。
+- `.harness/task-harness/tasks/*.json`：权威任务源，每个任务一个独立 JSON 文件。
+- `.harness/task-harness/progress/YYYY-MM/*.md`：每次会话一个独立进度文件，避免多分支同时追加同一月度文件。
+- `.harness/task-harness/progress/latest.txt`：legacy 兼容快照，不作为权威进度源。
+- `.harness/task-harness/features/*.json`：只作为 v2/legacy bucket 读取兼容，不作为新任务默认写入目标。
 
-`.harness/feature_list.json` 只用于 legacy 项目兼容：如果旧项目已经存在该文件，可以继续同步 active bucket 视图；新项目不要主动创建它。
+`.harness/feature_list.json` 只用于 legacy 项目兼容：如果旧项目已经存在该文件，可以继续作为旧 active bucket 视图；新项目不要主动创建它。
+
+任务 ID 不再使用 `feat-01` 这种全局递增序号。新任务 ID 由 UTC 时间戳、类型前缀、描述 slug 和短 hash 组成，例如：
+
+```text
+20260508T153012Z-feat-login-rate-limit-a3f9c2
+```
+
+排序依赖 `priority`、`created_at`、`id`，不要把执行顺序编码进任务 ID。
 
 ## 4. 持续拆任务
 
@@ -94,10 +103,10 @@ python3 {{SKILL_PATH}}/scripts/decompose_tasks.py \
 
 - 用户指定数量时尽量满足；未指定时通常拆 4-8 个可执行任务。
 - 每个任务要能进入 `read task -> plan -> build -> qa -> fix -> mark_pass` 闭环。
-- 新任务默认写入 active bucket；只有用户指定时才切换 bucket。
+- 新任务默认新增到 `.harness/task-harness/tasks/`，不得为了追加任务而修改 `backlog-core.json` 或 `index.json`。
 - 回报新增任务 ID、优先级、建议执行顺序和下一步命令。
 
-任务过多或旧 `feature_list.json` 过大时，可运行：
+旧 `feature_list.json` 或 v2 bucket 过大时，才考虑运行 legacy 重平衡工具：
 
 ```bash
 python3 {{SKILL_PATH}}/scripts/rebalance_tasks.py --target-dir "<项目目录>"
@@ -107,14 +116,14 @@ python3 {{SKILL_PATH}}/scripts/rebalance_tasks.py --target-dir "<项目目录>"
 
 当用户要求执行某个 feature，按以下顺序推进：
 
-1. 定位任务：优先用用户给出的 `feat-id`；没有时用 `.harness/scripts/ensure_task_branch.py` 选择当前任务。
+1. 定位任务：优先用用户给出的任务 ID；没有时用 `.harness/scripts/ensure_task_branch.py` 扫描单任务文件与 legacy bucket 后选择当前任务。
 2. 读取任务：看 `description`、`steps`、`spec_path`、`contract_path`、`qa_report_path`。
 3. Plan：生成或更新 `.harness/docs/specs/<feature>.md`。
 4. Build：只实现 contract 范围内的内容。
 5. QA：运行可用测试；QA 默认非阻塞，但失败要记录问题。
 6. Fix：单元测试失败时最多修 3 轮。
 7. Mark pass：单元测试通过，且 `spec_path` / `contract_path` 文件真实存在后，才可把 `passes=false` 改为 `true`。
-8. Session close：调用会话收口脚本，刷新最新进度。
+8. Session close：调用会话收口脚本，写入独立进度分片。
 
 如果 3 轮后单元测试仍失败，保持 `passes=false`，记录原因、已尝试修复和下一步建议。
 
@@ -125,7 +134,7 @@ python3 {{SKILL_PATH}}/scripts/rebalance_tasks.py --target-dir "<项目目录>"
 ```bash
 python3 .harness/scripts/session_close.py \
   --target-dir . \
-  --feature-id "<feat-id>" \
+  --feature-id "<task-id>" \
   --outcome "pass|fail|blocked|in-progress" \
   --qa-score "<0-100，可选>" \
   --note "<本轮摘要>"
@@ -135,8 +144,8 @@ python3 .harness/scripts/session_close.py \
 
 收口脚本会：
 
-- 追加进度日志。
-- 刷新 `.harness/task-harness/progress/latest.txt`。
+- 写入 `.harness/task-harness/progress/YYYY-MM/<timestamp>-<task-id>.md` 独立进度日志。
+- legacy 项目兼容刷新 `.harness/task-harness/progress/latest.txt`。
 - 输出下一任务建议。
 
 继续下个任务时运行：
@@ -193,7 +202,7 @@ Java 后端采用分片 Java 总门禁，并融合真实项目验证过的落地
 
 - `AGENTS.md` 是主契约，定义 Plan / Build / Verify / Fix。
 - `.harness/docs/TASK-HARNESS.md` 是任务层契约，不得覆盖主契约。
-- 常规任务只更新任务状态、进度和闭环工件，不随意改任务结构。
+- 常规任务只更新对应单任务 JSON 的状态、进度和闭环工件，不随意改任务结构。
 - 规划方案必须遵守“如无必要，勿增实体”；历史项目小改动默认按最小成本实施，新增实体/表/DTO/Service/配置项必须写明必要性、替代方案、迁移成本和回滚影响。
 - 单元测试通过且 spec/contract 已落盘后才可 `passes=true`；QA 报告默认非阻塞，但必须记录结果。
 - 任何已标记 `passes=true` 的 feature，如果缺少 `spec_path` 或 `contract_path` 对应文件，pre-completion hook 必须阻断完成。
@@ -214,7 +223,7 @@ Java 后端采用分片 Java 总门禁，并融合真实项目验证过的落地
 
 - `用 by-harness 初始化这个仓库，项目名 xxx，目标是 xxx`
 - `持续拆任务 主题：支付链路稳定性，拆 5 个`
-- `执行 feat-03，严格按 read task -> plan -> build -> qa -> fix -> mark_pass`
+- `执行 20260508T153012Z-feat-login-rate-limit-a3f9c2，严格按 read task -> plan -> build -> qa -> fix -> mark_pass`
 - `把当前会话收口，记录 qa 分数和下一步`
 - `升级这个项目里的 harness runtime`
 - `这个 Java 功能按 Java 总门禁检查 Service、金额、Redis、分页和配置`

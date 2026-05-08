@@ -57,6 +57,6 @@ argument-hint: 可选 - 指定 .harness/docs/specs/ 中要实现的 spec 文件
 若单元测试通过：
 - 更新契约中的冲刺日志。
 - 确认目标 feature 的 `spec_path` 与 `contract_path` 文件真实存在；缺任一文件时禁止 `passes=true`。
-- 若项目使用 task-harness（存在 `.harness/task-harness/index.json`），仅在单元测试通过且 spec/contract 文件存在后，更新 active bucket 中对应 feature 的 `passes=true`（若存在 `.harness/feature_list.json` 则脚本会同步兼容镜像）。
-- 在 `.harness/task-harness/progress/latest.txt` 记录本轮结果（若文件存在）。
+- 若项目使用 task-harness（存在 `.harness/task-harness/index.json`），仅在单元测试通过且 spec/contract 文件存在后，更新对应单任务 JSON 的 `passes=true`。
+- 通过 `.harness/scripts/session_close.py` 写入 `.harness/task-harness/progress/YYYY-MM/<timestamp>-<feature-id>.md`。
 - 询问用户是否执行 `doc-gardener` 做文档新鲜度检查。

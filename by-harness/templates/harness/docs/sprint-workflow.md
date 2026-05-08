@@ -129,7 +129,7 @@ Evaluator 使用 Java 工程验证策略：
 
 若项目启用了 task-harness（存在 `.harness/task-harness/index.json`）：
 - 单元测试通过且 `spec_path` / `contract_path` 文件真实存在后，才可更新对应 feature 的 `passes=true`
-- 同步在 `.harness/task-harness/progress/YYYY-MM.md` 追加该 feature 的闭环记录
+- 同步在 `.harness/task-harness/progress/YYYY-MM/<timestamp>-<feature-id>.md` 写入该 feature 的闭环记录
 
 ## 上下文重置（Context Reset）与压缩（Compaction）的取舍
 

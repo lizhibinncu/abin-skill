@@ -125,10 +125,10 @@
 
 若项目存在 `.harness/task-harness/index.json` 与 `.harness/docs/TASK-HARNESS.md`，按以下方式形成任务闭环：
 
-1. 从 active bucket 任务文件（默认 `.harness/task-harness/features/backlog-core.json`）选择优先级最高且 `passes=false` 的 feature
+1. 从 `.harness/task-harness/tasks/*.json` 选择优先级最高且 `passes=false` 的 feature；旧 bucket/feature_list 仅作兼容读取
 2. 严格执行 `plan -> contract -> build -> qa -> fix` 主流程
 3. 单元测试通过且 `spec_path` / `contract_path` 文件真实存在后，才可将该 feature 的 `passes` 置为 `true`
-4. 在 `.harness/task-harness/progress/latest.txt` 记录本轮实现、验证结果与下一步
+4. 通过 `.harness/scripts/session_close.py` 写入 `.harness/task-harness/progress/YYYY-MM/<timestamp>-<feature-id>.md`
 5. 若达到 3 轮仍失败，保持 `passes=false` 并继续下一个任务
 
 集成约束：
@@ -157,6 +157,8 @@
 - `.harness/docs/plans/`：计划产物
 - `.harness/docs/java-dev-conventions.md`：Java 后端编码规范入口（Java 项目先读）
 - `.harness/docs/java/rules/`：Java 分片规则（按任务触发维度读取）
+- `.harness/task-harness/tasks/`：v3 权威任务目录，每个任务一个 JSON 文件
+- `.harness/task-harness/features/`：v2/legacy bucket 目录，仅兼容读取
 - `.harness/feature_list.json`：legacy 兼容镜像（仅在历史项目存在时沿用）
 - `.harness/config/runtime-version.json`：运行时版本号（用于版本化升级）
 - `.harness/config/update-policy.json`：远程更新策略（定时检查与自动应用）

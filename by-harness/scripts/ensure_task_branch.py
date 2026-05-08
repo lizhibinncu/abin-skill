@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from task_store import load_task_entries, write_feature_update
+
 HARNESS_DIR_NAME = ".harness"
 SESSION_MODE_SOFT = "soft_reset"
 SESSION_MODE_HARD = "hard_new_session"
@@ -248,7 +250,7 @@ def extract_prompt_refs(prompt_text: str) -> tuple[list[str], list[str]]:
         if normalized not in task_ids:
             task_ids.append(normalized)
 
-    for match in re.findall(r"\bfeat-\d+\b", text, flags=re.IGNORECASE):
+    for match in re.findall(r"\b(?:\d{8}T\d{6}Z-)?[a-z]{2,}(?:-[a-z0-9]{1,})+\b", text, flags=re.IGNORECASE):
         value = match.lower()
         if value not in feature_ids:
             feature_ids.append(value)
@@ -363,21 +365,18 @@ def main() -> int:
             print("[task] run `bash .harness/scripts/init.sh` in a NEW session before next feature.")
             return 2
 
-    feature_file, legacy_mirror, _index_data = resolve_feature_file(workspace_dir)
-    if not feature_file.exists():
-        print(f"[task] feature file not found: {feature_file}")
-        return 0
-
     try:
-        data = load_json(feature_file)
-    except (json.JSONDecodeError, OSError, ValueError):
-        print(f"[task] invalid JSON in feature file: {feature_file}")
+        entries = load_task_entries(workspace_dir)
+    except Exception as exc:
+        print(f"[task] failed to read task storage: {exc}")
         return 0
 
-    features = data.get("features", [])
-    if not isinstance(features, list) or not features:
-        print(f"[task] no features found in: {feature_file}")
+    if not entries:
+        feature_file, _legacy_mirror, _index_data = resolve_feature_file(workspace_dir)
+        print(f"[task] no task files found; checked legacy source: {feature_file}")
         return 0
+
+    features = [entry.feature for entry in entries]
 
     task_state = build_task_state(features)
     selectable = sorted([f for f in features if is_selectable(f, task_state)], key=sort_key)
@@ -417,16 +416,15 @@ def main() -> int:
         next_status = status
         if not bool(selected.get("passes")) and status.strip().lower() in ("", "todo"):
             next_status = "doing"
-        changed_active = sync_feature_status(data, feature_id, next_status)
-        write_json_if_changed(feature_file, data, changed_active)
+        selected_entry = next(
+            (entry for entry in entries if str(entry.feature.get("id", "")) == feature_id),
+            None,
+        )
+        if selected_entry is not None:
+            def mutate(feature: dict[str, Any]) -> bool:
+                return sync_feature_status({"features": [feature]}, feature_id, next_status)
 
-        if legacy_mirror != feature_file and legacy_mirror.exists():
-            try:
-                mirror_data = load_json(legacy_mirror)
-            except (json.JSONDecodeError, OSError, ValueError):
-                mirror_data = {}
-            changed_mirror = sync_feature_status(mirror_data, feature_id, next_status)
-            write_json_if_changed(legacy_mirror, mirror_data, changed_mirror)
+            write_feature_update(selected_entry, mutate)
 
     return 0
 

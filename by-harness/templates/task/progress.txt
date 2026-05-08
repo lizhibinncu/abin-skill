@@ -20,8 +20,8 @@
 完成工作:
   [x] 探索项目结构，了解技术架构
   [x] 制定开发计划
-  [x] 创建 .harness/task-harness/features/backlog-core.json（N 个功能点）
-  [x] 创建 .harness/task-harness/progress/latest.txt（本文件）
+  [x] 创建 .harness/task-harness/tasks/（v3 单任务文件目录）
+  [x] 创建 .harness/task-harness/progress/latest.txt（legacy 兼容快照）
   [x] 创建 .harness/scripts/init.sh（环境初始化脚本）
   [x] 创建 .harness/config/task.json（项目总览）
   [x] 确认 AGENTS.md（Harness 主执行契约）已存在
@@ -33,7 +33,7 @@
   - {{重要发现 3}}
 
 下一步:
-  - 按优先级顺序完成 active bucket（默认 .harness/task-harness/features/backlog-core.json）中的功能
+  - 按优先级顺序完成 .harness/task-harness/tasks/*.json 中的功能
 
 ----------------------------------------
 （后续会话在此追加，格式如下）

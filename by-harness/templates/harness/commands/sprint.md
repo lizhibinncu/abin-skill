@@ -71,8 +71,8 @@ argument-hint: 功能描述（1-4 句话）
 若单元测试通过：
 1. 在 contract 的 Sprint Log 里写入最终结果
 2. 确认该 feature 的 `spec_path` 与 `contract_path` 文件真实存在；缺任一文件时回到 Plan/Contract 阶段补齐
-3. 若存在 `.harness/task-harness/index.json`，将 active bucket 中对应 feature 的 `passes` 更新为 `true`（若存在 `.harness/feature_list.json` 则同步兼容镜像）
-4. 若存在 `.harness/task-harness/progress/latest.txt`，追加本轮冲刺记录
+3. 若存在 `.harness/task-harness/index.json`，将对应单任务 JSON 中该 feature 的 `passes` 更新为 `true`
+4. 调用 `.harness/scripts/session_close.py` 写入独立进度分片
 5. 调用 doc-gardener 智能体执行新鲜度审计
 6. 产出冲刺总结：
    - 已构建功能

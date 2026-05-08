@@ -17,7 +17,7 @@ from datetime import date
 from pathlib import Path
 
 HARNESS_DIR_NAME = ".harness"
-HARNESS_RUNTIME_VERSION = "2.3.10"
+HARNESS_RUNTIME_VERSION = "2.4.0"
 MANAGED_BLOCK_BEGIN = "<!-- BEGIN BY-HARNESS MANAGED BLOCK -->"
 MANAGED_BLOCK_END = "<!-- END BY-HARNESS MANAGED BLOCK -->"
 AGENT_DOC_ALIASES = {
@@ -267,7 +267,7 @@ def verify_outputs(target_dir: Path):
         "CLAUDE.md",
         f"{HARNESS_DIR_NAME}/docs/TASK-HARNESS.md",
         f"{HARNESS_DIR_NAME}/task-harness/index.json",
-        f"{HARNESS_DIR_NAME}/task-harness/features/backlog-core.json",
+        f"{HARNESS_DIR_NAME}/task-harness/tasks",
         f"{HARNESS_DIR_NAME}/config/runtime-version.json",
         f"{HARNESS_DIR_NAME}/config/update-policy.json",
         f"{HARNESS_DIR_NAME}/config/task.json",
@@ -275,6 +275,7 @@ def verify_outputs(target_dir: Path):
         f"{HARNESS_DIR_NAME}/scripts/session_close.py",
         f"{HARNESS_DIR_NAME}/scripts/ensure_task_branch.py",
         f"{HARNESS_DIR_NAME}/scripts/task_switch.py",
+        f"{HARNESS_DIR_NAME}/scripts/task_store.py",
         f"{HARNESS_DIR_NAME}/scripts/update_runtime.py",
         f"{HARNESS_DIR_NAME}/scripts/init.sh",
         ".codex/config.toml",
@@ -336,7 +337,6 @@ def main():
         ("harness/codex/hooks/pre-completion-check.py", ".codex/hooks/pre-completion-check.py"),
         ("harness/codex/hooks/convention-check.py", ".codex/hooks/convention-check.py"),
         ("task/index.json", f"{HARNESS_DIR_NAME}/task-harness/index.json"),
-        ("task/backlog-core.json", f"{HARNESS_DIR_NAME}/task-harness/features/backlog-core.json"),
         ("task/runtime-version.json", f"{HARNESS_DIR_NAME}/config/runtime-version.json"),
         ("task/update-policy.json", f"{HARNESS_DIR_NAME}/config/update-policy.json"),
         ("task/progress.txt", f"{HARNESS_DIR_NAME}/task-harness/progress/latest.txt"),
@@ -370,6 +370,7 @@ def main():
         "session_close.py",
         "ensure_task_branch.py",
         "task_switch.py",
+        "task_store.py",
         "update_runtime.py",
         "upgrade_legacy_repo.py",
     ):
@@ -382,6 +383,7 @@ def main():
     (harness_dir / "docs" / "plans").mkdir(parents=True, exist_ok=True)
     (harness_dir / "docs" / "qa").mkdir(parents=True, exist_ok=True)
     (harness_dir / "task-harness" / "progress").mkdir(parents=True, exist_ok=True)
+    (harness_dir / "task-harness" / "tasks").mkdir(parents=True, exist_ok=True)
 
     merge_settings(target_dir, templates_harness / "settings.json")
     merge_codex_hooks(target_dir, templates_harness / "codex" / "hooks.json")
@@ -397,8 +399,8 @@ def main():
     print(f"  1. bash {HARNESS_DIR_NAME}/scripts/init.sh")
     print(f"  2. 阅读 AGENTS.md 与 {HARNESS_DIR_NAME}/docs/TASK-HARNESS.md")
     print("  3. 选择 passes=false 的 feature，执行 plan/build/qa 闭环")
-    print(f"  4. 单元测试通过且 spec/contract 已落盘后，才可更新 passes=true（QA 非阻塞），并写入 {HARNESS_DIR_NAME}/task-harness/progress/YYYY-MM.md")
-    print(f"  5. 会话结束执行：python3 {HARNESS_DIR_NAME}/scripts/session_close.py --target-dir . --feature-id <feat-id> --outcome pass")
+    print(f"  4. 单元测试通过且 spec/contract 已落盘后，才可更新 passes=true（QA 非阻塞），并写入 {HARNESS_DIR_NAME}/task-harness/progress/YYYY-MM/*.md")
+    print(f"  5. 会话结束执行：python3 {HARNESS_DIR_NAME}/scripts/session_close.py --target-dir . --feature-id <task-id> --outcome pass")
     print(f"  6. 自动续跑下个任务（当前分支）：python3 {HARNESS_DIR_NAME}/scripts/task_switch.py continue --target-dir .")
     print(f"  7. 配置并启用远程更新：编辑 {HARNESS_DIR_NAME}/config/update-policy.json")
 

@@ -3,8 +3,8 @@
 Session close helper for by-harness projects.
 
 Actions:
-1) Append session log (monthly in sharded mode / progress.txt in legacy mode)
-2) Update latest progress snapshot (.harness/task-harness/progress/latest.txt in sharded mode)
+1) Write session log (per-session shard in file_tasks mode / monthly append in legacy mode)
+2) Write a per-session snapshot in file_tasks mode; legacy sharded mode still refreshes latest.txt
 3) Print next task recommendation
 """
 
@@ -12,8 +12,10 @@ import argparse
 import json
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+
+import task_store
 
 HARNESS_DIR_NAME = ".harness"
 SESSION_MODE_SOFT = "soft_reset"
@@ -355,6 +357,12 @@ def append_session_log(log_path: Path, entry: str) -> int:
     return session_no
 
 
+def write_file_task_session_log(log_path: Path, entry: str) -> int:
+    finalized = entry.replace("会话 #0 -", "会话 #1 -", 1)
+    dump_text(log_path, finalized)
+    return 1
+
+
 def build_latest_snapshot(feature, outcome: str, qa_score: float, total: int, passed: int, next_feature, log_path: Path):
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     feat_id = str(feature.get("id", "n/a")) if feature else "n/a"
@@ -399,6 +407,24 @@ def build_session_meta(feature, next_feature, outcome: str, context_mode: str):
         payload["next_feature_id"] = ""
         payload["next_feature_description"] = "无（全部任务已完成）"
     return payload
+
+
+def safe_filename(value: str, fallback: str = "task") -> str:
+    text = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value or "").strip())
+    return text.strip("-") or fallback
+
+
+def use_file_task_progress(workspace_dir: Path, entries) -> bool:
+    if any(entry.source_kind == "single" for entry in entries):
+        return True
+    index_path = workspace_dir / "task-harness" / "index.json"
+    if not index_path.exists():
+        return False
+    try:
+        index = load_json(index_path)
+    except (HarnessJsonError, json.JSONDecodeError, OSError, ValueError):
+        return False
+    return isinstance(index, dict) and str(index.get("mode", "")).strip() == "file_tasks"
 
 
 def bump_session_context(workspace_dir: Path, meta: dict, context_mode: str) -> tuple[Path, int]:
@@ -448,24 +474,21 @@ def main():
     args = parse_args()
     target_dir = Path(args.target_dir).resolve()
     workspace_dir = detect_workspace_dir(target_dir)
-    try:
-        store = resolve_store(workspace_dir)
-    except HarnessJsonError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        sys.exit(1)
     session_control = load_session_control(workspace_dir)
     context_mode = session_control["context_mode"]
 
     try:
-        features = load_all_features(workspace_dir, store)
-    except HarnessJsonError as exc:
+        entries = task_store.load_task_entries(workspace_dir)
+    except task_store.HarnessJsonError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
+    features = [entry.feature for entry in entries]
     if not isinstance(features, list):
         print("Error: feature list storage invalid")
         sys.exit(1)
 
-    feature = find_feature(features, args.feature_id)
+    entry = task_store.find_entry(workspace_dir, args.feature_id)
+    feature = entry.feature if entry else None
     if args.feature_id and feature is None:
         candidates = sample_feature_ids(features)
         print(f"Error: feature id not found: {args.feature_id}")
@@ -497,7 +520,13 @@ def main():
             exclude_id=str(feature.get("id", "")) if feature else "",
         )
 
-    if store["mode"] == "sharded":
+    file_task_progress = use_file_task_progress(workspace_dir, entries)
+    if file_task_progress:
+        monthly = datetime.now().strftime("%Y-%m")
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        feature_token = safe_filename(str(feature.get("id", "session")) if feature else "session")
+        session_log_path = workspace_dir / "task-harness" / "progress" / monthly / f"{stamp}-{feature_token}.md"
+    elif (workspace_dir / "task-harness" / "index.json").exists():
         monthly = datetime.now().strftime("%Y-%m")
         session_log_path = workspace_dir / "task-harness" / "progress" / f"{monthly}.md"
     else:
@@ -513,9 +542,25 @@ def main():
         passed=passed,
         next_feature=next_feature,
     )
-    session_no = append_session_log(session_log_path, entry)
+    if file_task_progress:
+        session_no = write_file_task_session_log(session_log_path, entry)
+    else:
+        session_no = append_session_log(session_log_path, entry)
 
-    if store["mode"] == "sharded":
+    if file_task_progress:
+        snapshot_path = session_log_path.with_suffix(".snapshot.txt")
+        snapshot = build_latest_snapshot(
+            feature=feature,
+            outcome=args.outcome,
+            qa_score=args.qa_score,
+            total=total,
+            passed=passed,
+            next_feature=next_feature,
+            log_path=session_log_path,
+        )
+        dump_text(snapshot_path, snapshot)
+        print(f"Wrote session snapshot: {snapshot_path}")
+    elif (workspace_dir / "task-harness" / "index.json").exists():
         snapshot_path = workspace_dir / "task-harness" / "progress" / "latest.txt"
         snapshot = build_latest_snapshot(
             feature=feature,
@@ -541,7 +586,8 @@ def main():
         context_mode=context_mode,
     )
 
-    print(f"Appended session log: {session_log_path} (session #{session_no})")
+    log_action = "Wrote" if file_task_progress else "Appended"
+    print(f"{log_action} session log: {session_log_path} (session #{session_no})")
     print(f"Context mode: {context_mode}")
     print(f"Session context updated: {context_path} (epoch={epoch})")
     print("Auto-continue command: python3 .harness/scripts/task_switch.py continue --target-dir .")

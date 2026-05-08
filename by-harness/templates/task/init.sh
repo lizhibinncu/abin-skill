@@ -69,76 +69,51 @@ fi
 
 echo ""
 echo "[4/8] 功能完成进度:"
-FEATURE_FILE="task-harness/features/backlog-core.json"
-ACTIVE_BUCKET="backlog-core"
-if [ ! -f "task-harness/index.json" ] && [ -f "feature_list.json" ]; then
-  FEATURE_FILE="feature_list.json"
-  ACTIVE_BUCKET="legacy"
-fi
-if [ -f "task-harness/index.json" ]; then
-  MAP=$(python3 - <<'PY'
-import json
+PYTHONPATH="$HARNESS_DIR/scripts:${PYTHONPATH:-}" python3 - <<'PY' || echo "  (任务状态解析失败)"
 from pathlib import Path
 
-idx_path = Path("task-harness/index.json")
-idx = json.loads(idx_path.read_text())
-active = idx.get("active_bucket", "")
-buckets = idx.get("buckets", [])
-path = ""
-for b in buckets:
-    if b.get("id") == active:
-        path = b.get("path", "")
-        break
-if not path and buckets:
-    active = buckets[0].get("id", "")
-    path = buckets[0].get("path", "")
-print(path or "task-harness/features/backlog-core.json")
-print(active or "backlog-core")
-PY
+try:
+    from task_store import load_task_entries
+except Exception as exc:
+    print(f"  task_store 加载失败: {exc}")
+    raise SystemExit(0)
+
+workspace = Path(".").resolve()
+try:
+    entries = load_task_entries(workspace)
+except Exception as exc:
+    print(f"  任务存储读取失败: {exc}")
+    raise SystemExit(0)
+
+features = [entry.feature for entry in entries]
+total = len(features)
+passed = sum(1 for feat in features if bool(feat.get("passes")))
+pending = [feat for feat in features if not bool(feat.get("passes"))]
+pending.sort(
+    key=lambda feat: (
+        int(feat.get("priority", 10**9)) if str(feat.get("priority", "")).isdigit() else 10**9,
+        str(feat.get("created_at", "")),
+        str(feat.get("id", "")),
+    )
 )
-  FEATURE_FILE=$(printf "%s\n" "$MAP" | sed -n '1p')
-  ACTIVE_BUCKET=$(printf "%s\n" "$MAP" | sed -n '2p')
-fi
+source_counts = {}
+for entry in entries:
+    source_counts[entry.source_kind] = source_counts.get(entry.source_kind, 0) + 1
 
-if [ -f "$FEATURE_FILE" ]; then
-  TOTAL_RAW=$(python3 -c "import json; f=open('$FEATURE_FILE'); d=json.load(f); print(len(d['features']))" 2>/dev/null || echo "0")
-  PASSED_RAW=$(python3 -c "import json; f=open('$FEATURE_FILE'); d=json.load(f); print(sum(1 for x in d['features'] if x.get('passes')))" 2>/dev/null || echo "0")
-
-  if [[ "$TOTAL_RAW" =~ ^[0-9]+$ ]]; then
-    TOTAL="$TOTAL_RAW"
-  else
-    TOTAL=0
-  fi
-
-  if [[ "$PASSED_RAW" =~ ^[0-9]+$ ]]; then
-    PASSED="$PASSED_RAW"
-  else
-    PASSED=0
-  fi
-
-  if [ "$PASSED" -gt "$TOTAL" ]; then
-    PASSED="$TOTAL"
-  fi
-
-  echo "  任务桶: $ACTIVE_BUCKET"
-  echo "  任务文件: $FEATURE_FILE"
-  echo "  总计: $TOTAL 个功能"
-  echo "  已完成: $PASSED 个"
-  echo "  剩余: $((TOTAL - PASSED)) 个"
-
-  echo ""
-  echo "  未完成的功能:"
-  python3 -c "
-import json
-with open('$FEATURE_FILE') as f:
-    d = json.load(f)
-for feat in d['features']:
-    if not feat.get('passes'):
-        print(f\"    [{feat.get('id','?')}] P{feat.get('priority','?')}: {feat.get('description','')}\")
-" 2>/dev/null || echo "    (解析失败)"
-else
-  echo "  (任务文件不存在: $FEATURE_FILE)"
-fi
+print(f"  任务源: {', '.join(f'{k}={v}' for k, v in sorted(source_counts.items())) or 'none'}")
+print(f"  总计: {total} 个功能")
+print(f"  已完成: {passed} 个")
+print(f"  剩余: {max(total - passed, 0)} 个")
+print("")
+print("  未完成的功能:")
+if not pending:
+    print("    (无)")
+else:
+    for feat in pending[:20]:
+        print(f"    [{feat.get('id','?')}] P{feat.get('priority','?')}: {feat.get('description','')}")
+    if len(pending) > 20:
+        print(f"    ... 另有 {len(pending) - 20} 个未展示")
+PY
 
 echo ""
 echo "[5/8] 运行时远程更新检查:"
@@ -306,12 +281,12 @@ echo ""
 echo "下一步操作:"
 echo "  1. 阅读 AGENTS.md（Harness 主闭环规则）"
 echo "  2. 阅读 ${WORKSPACE_PREFIX}docs/TASK-HARNESS.md（任务层规则）"
-echo "  3. 阅读 ${WORKSPACE_PREFIX}task-harness/progress/*.md（${WORKSPACE_PREFIX}task-harness/progress/latest.txt 为最新快照）"
+echo "  3. 阅读 ${WORKSPACE_PREFIX}task-harness/progress/YYYY-MM/*.md（latest.txt 仅作 legacy 兼容快照）"
 echo "  4. 确认已自动定位当前任务（默认在当前分支开发）"
 echo "  5. 若为 Java 项目，先阅读 ${WORKSPACE_PREFIX}docs/java-dev-conventions.md，并按触发维度读取 ${WORKSPACE_PREFIX}docs/java/rules/"
 echo "  6. 按 plan/build/qa 流程执行，单元测试通过后即可改 passes（QA 非阻塞）"
 echo "  7. 如需手动更新运行时：python3 ${WORKSPACE_PREFIX}scripts/update_runtime.py --target-dir . --dry-run"
-echo "  8. 运行 python3 ${WORKSPACE_PREFIX}scripts/session_close.py --target-dir . --feature-id <feat-id> --outcome pass"
+echo "  8. 运行 python3 ${WORKSPACE_PREFIX}scripts/session_close.py --target-dir . --feature-id <task-id> --outcome pass"
 echo "  9. 自动续跑下个任务：python3 ${WORKSPACE_PREFIX}scripts/task_switch.py continue --target-dir ."
 echo " 10. git commit / git push"
 echo ""

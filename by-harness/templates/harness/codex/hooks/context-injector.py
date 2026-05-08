@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 """
-Codex UserPromptSubmit hook: inject concise project context.
+Context Injector Hook for Harness Engineering Framework.
+
+UserPromptSubmit hook that injects project state context at the start of each session.
+
+This implements the "Context Budget" and "Environment Context Injection" principles
+from LangChain's research: agents perform better when they know about their environment,
+current state, and active tasks.
+
+Hook output format:
+- {"systemMessage": "..."} to inject context without blocking
 """
 
 import json
@@ -25,20 +34,33 @@ SQL_ORM_RULE_CARD = "\n".join(
         "- 行数统计必须使用 count(*)；sum() 必须用 IFNULL/COALESCE 兜底 NULL。",
         "- 更新记录必须维护 update_time。",
         "- 禁止外键、级联和存储过程承载业务逻辑。",
-        "- 声称完成前运行 .codex/hooks/convention-check.py --changed-only。",
+        "- 声称完成前运行 .claude/hooks/convention-check.py --changed-only。",
     ]
 )
 
 
-def emit(payload):
-    print(json.dumps(payload, ensure_ascii=False))
-
-
-def read_hook_input():
+def get_git_info():
+    """Get current git branch and recent commits."""
+    info = {}
     try:
-        return json.loads(sys.stdin.read() or "{}")
-    except (json.JSONDecodeError, ValueError):
-        return {}
+        branch = subprocess.check_output(
+            ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+            stderr=subprocess.DEVNULL, timeout=5
+        ).decode().strip()
+        info['branch'] = branch
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        info['branch'] = 'unknown (not a git repo)'
+
+    try:
+        recent = subprocess.check_output(
+            ['git', 'log', '--oneline', '-5'],
+            stderr=subprocess.DEVNULL, timeout=5
+        ).decode().strip()
+        info['recent_commits'] = recent
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        info['recent_commits'] = ''
+
+    return info
 
 
 def collect_keyed_strings(obj, target_keys):
@@ -78,7 +100,7 @@ def should_inject_sql_orm_rules(prompt_text: str) -> bool:
     return is_java_project and bool(CODE_TRIGGER_RE.search(prompt_text or ""))
 
 
-def _find_branch_script(repo: Path):
+def find_branch_script(repo: Path):
     candidates = [
         repo / HARNESS_DIR_NAME / "scripts" / "ensure_task_branch.py",
         repo / "scripts" / "ensure_task_branch.py",
@@ -89,9 +111,9 @@ def _find_branch_script(repo: Path):
     return None
 
 
-def run_auto_branch(prompt_text: str) -> str:
+def run_auto_branch(prompt_text):
     repo = Path.cwd()
-    script_path = _find_branch_script(repo)
+    script_path = find_branch_script(repo)
     if script_path is None:
         return "Task sync: ensure_task_branch.py not found (skip)."
 
@@ -122,155 +144,226 @@ def run_auto_branch(prompt_text: str) -> str:
     return f"Task sync warning: {output or 'failed'}"
 
 
-def get_git_info():
-    info = {}
-    try:
-        info["branch"] = subprocess.check_output(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            stderr=subprocess.DEVNULL,
-            timeout=5,
-        ).decode().strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        info["branch"] = "unknown (not a git repo)"
-
-    try:
-        info["recent_commits"] = subprocess.check_output(
-            ["git", "log", "--oneline", "-5"],
-            stderr=subprocess.DEVNULL,
-            timeout=5,
-        ).decode().strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        info["recent_commits"] = ""
-
-    return info
-
-
 def get_project_state():
+    """Scan for project state indicators."""
     state = {}
     cwd = Path.cwd()
     workspace = cwd / HARNESS_DIR_NAME if (cwd / HARNESS_DIR_NAME).exists() else cwd
 
-    specs_dir = workspace / "docs" / "specs"
+    # Check for active specs
+    specs_dir = workspace / 'docs' / 'specs'
     if specs_dir.exists():
-        specs = list(specs_dir.glob("*.md"))
+        specs = list(specs_dir.glob('*.md'))
         if specs:
-            state["active_specs"] = [
-                p.name for p in sorted(specs, key=lambda x: x.stat().st_mtime, reverse=True)[:5]
-            ]
+            state['active_specs'] = [s.name for s in sorted(specs, key=lambda x: x.stat().st_mtime, reverse=True)[:5]]
 
-    contracts_dir = workspace / "docs" / "contracts"
+    # Check for active contracts
+    contracts_dir = workspace / 'docs' / 'contracts'
     if contracts_dir.exists():
-        contracts = [p for p in contracts_dir.glob("*.md") if p.name != "TEMPLATE.md"]
+        contracts = [c for c in contracts_dir.glob('*.md') if c.name != 'TEMPLATE.md']
         if contracts:
-            state["active_contracts"] = [
-                p.name for p in sorted(contracts, key=lambda x: x.stat().st_mtime, reverse=True)[:5]
-            ]
+            state['active_contracts'] = [c.name for c in sorted(contracts, key=lambda x: x.stat().st_mtime, reverse=True)[:5]]
 
-    plans_dir = workspace / "docs" / "plans"
+    # Check for active plans
+    plans_dir = workspace / 'docs' / 'plans'
     if plans_dir.exists():
-        plans = list(plans_dir.glob("*.md"))
+        plans = list(plans_dir.glob('*.md'))
         if plans:
-            state["active_plans"] = [
-                p.name for p in sorted(plans, key=lambda x: x.stat().st_mtime, reverse=True)[:5]
-            ]
+            state['active_plans'] = [p.name for p in sorted(plans, key=lambda x: x.stat().st_mtime, reverse=True)[:5]]
 
     return state
 
 
 def resolve_task_feature_file(workspace: Path):
-    legacy = workspace / "feature_list.json"
-    index_path = workspace / "task-harness" / "index.json"
-    default_path = workspace / "task-harness" / "features" / "backlog-core.json"
+    legacy = workspace / 'feature_list.json'
+    index_path = workspace / 'task-harness' / 'index.json'
+    default_path = workspace / 'task-harness' / 'features' / 'backlog-core.json'
 
     if not index_path.exists():
         if legacy.exists():
-            return legacy, "legacy_feature_list"
-        return default_path, "active_bucket"
+            return legacy, 'legacy_feature_list'
+        return default_path, 'active_bucket'
 
     try:
-        index = json.loads(index_path.read_text(encoding="utf-8"))
+        index = json.loads(index_path.read_text(encoding='utf-8'))
     except (json.JSONDecodeError, OSError, ValueError):
         if legacy.exists():
-            return legacy, "legacy_feature_list"
-        return default_path, "active_bucket"
+            return legacy, 'legacy_feature_list'
+        return default_path, 'active_bucket'
 
-    buckets = index.get("buckets", [])
-    active = str(index.get("active_bucket", "") or "")
-    rel_path = ""
+    buckets = index.get('buckets', [])
+    active = str(index.get('active_bucket', '') or '')
+    rel_path = ''
     if isinstance(buckets, list):
         for bucket in buckets:
-            if str(bucket.get("id", "") or "") == active:
-                rel_path = str(bucket.get("path", "") or "")
+            if str(bucket.get('id', '') or '') == active:
+                rel_path = str(bucket.get('path', '') or '')
                 break
         if not rel_path and buckets:
-            rel_path = str((buckets[0] or {}).get("path", "") or "")
+            rel_path = str((buckets[0] or {}).get('path', '') or '')
     if not rel_path:
-        rel_path = "task-harness/features/backlog-core.json"
+        rel_path = 'task-harness/features/backlog-core.json'
 
     candidate = workspace / rel_path
     if candidate.exists():
-        return candidate, "active_bucket"
-    if rel_path.startswith(f"{HARNESS_DIR_NAME}/"):
+        return candidate, 'active_bucket'
+    if rel_path.startswith(f'{HARNESS_DIR_NAME}/'):
         alt = workspace / rel_path[len(HARNESS_DIR_NAME) + 1 :]
         if alt.exists():
-            return alt, "active_bucket"
+            return alt, 'active_bucket'
 
     if legacy.exists():
-        return legacy, "legacy_feature_list"
-    return default_path, "active_bucket"
+        return legacy, 'legacy_feature_list'
+    return default_path, 'active_bucket'
+
+
+def task_source_paths(workspace: Path):
+    paths = []
+    seen = set()
+
+    index_path = workspace / 'task-harness' / 'index.json'
+    index = None
+    if index_path.exists():
+        try:
+            index = json.loads(index_path.read_text(encoding='utf-8'))
+        except (json.JSONDecodeError, OSError, ValueError):
+            index = None
+
+    patterns = ['task-harness/tasks/*.json']
+    if isinstance(index, dict) and isinstance(index.get('task_globs'), list):
+        patterns = [str(item) for item in index.get('task_globs', []) if str(item).strip()] or patterns
+    for pattern in patterns:
+        pattern_path = Path(pattern)
+        if pattern_path.is_absolute():
+            candidates = sorted(pattern_path.parent.glob(pattern_path.name))
+        else:
+            candidates = sorted(workspace.glob(pattern))
+        for path in candidates:
+            key = str(path)
+            if path.is_file() and key not in seen:
+                seen.add(key)
+                paths.append((path, 'file_tasks'))
+
+    if isinstance(index, dict):
+        buckets = index.get('legacy_buckets', index.get('buckets', []))
+        if isinstance(buckets, list):
+            for bucket in buckets:
+                if not isinstance(bucket, dict):
+                    continue
+                raw_path = str(bucket.get('path', '') or '').strip()
+                if not raw_path:
+                    continue
+                candidate = workspace / raw_path
+                if not candidate.exists() and raw_path.startswith(f'{HARNESS_DIR_NAME}/'):
+                    candidate = workspace / raw_path[len(HARNESS_DIR_NAME) + 1 :]
+                key = str(candidate)
+                if key not in seen:
+                    seen.add(key)
+                    paths.append((candidate, 'legacy_bucket'))
+
+    for path, source in [
+        (workspace / 'feature_list.json', 'legacy_feature_list'),
+        (workspace / 'task-harness' / 'features' / 'backlog-core.json', 'legacy_bucket'),
+    ]:
+        key = str(path)
+        if key not in seen:
+            seen.add(key)
+            paths.append((path, source))
+    return paths
+
+
+def features_from_task_payload(data):
+    if not isinstance(data, dict):
+        return []
+    if isinstance(data.get('features'), list):
+        return [item for item in data['features'] if isinstance(item, dict)]
+    if data.get('id') or data.get('description'):
+        return [data]
+    return []
+
+
+def load_all_task_features(workspace: Path):
+    features = []
+    seen_ids = set()
+    source = ''
+    for path, source_name in task_source_paths(workspace):
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding='utf-8'))
+        except (json.JSONDecodeError, OSError, ValueError):
+            continue
+        for feature in features_from_task_payload(data):
+            feature_id = str(feature.get('id', '') or '').strip()
+            key = feature_id.lower()
+            if key and key in seen_ids:
+                continue
+            if key:
+                seen_ids.add(key)
+            features.append(feature)
+            source = source or source_name
+    return features, source
+
+
+def to_priority(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 10**9
+
+
+def has_progress_shards(workspace: Path):
+    progress = workspace / 'task-harness' / 'progress'
+    if (progress / 'latest.txt').exists() or (workspace / 'progress.txt').exists():
+        return True
+    if not progress.exists():
+        return False
+    return any(path.is_file() and path.suffix == '.md' for path in progress.glob('*/*.md'))
 
 
 def get_task_harness_state():
+    """Scan task-harness state from v3 task files plus legacy buckets."""
     state = {}
     cwd = Path.cwd()
     workspace = cwd / HARNESS_DIR_NAME if (cwd / HARNESS_DIR_NAME).exists() else cwd
     workspace_label = f"{HARNESS_DIR_NAME}/" if workspace != cwd else ""
-    feature_path, source = resolve_task_feature_file(workspace)
 
-    if not feature_path.exists():
-        return state
-
-    try:
-        data = json.loads(feature_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError, ValueError):
-        return state
-
-    features = data.get("features", [])
-    if not isinstance(features, list):
+    features, source = load_all_task_features(workspace)
+    if not features:
         return state
 
     total = len(features)
-    passed = sum(1 for feat in features if bool(feat.get("passes")))
-    pending = [feat for feat in features if not bool(feat.get("passes"))]
-
+    passed = sum(1 for feat in features if bool(feat.get('passes')))
+    pending = [feat for feat in features if not bool(feat.get('passes'))]
     pending_sorted = sorted(
         pending,
         key=lambda feat: (
-            int(feat.get("priority", 10**9)) if str(feat.get("priority", "")).isdigit() else 10**9,
-            feat.get("id", ""),
+            to_priority(feat.get('priority')),
+            str(feat.get('created_at', '')),
+            feat.get('id', ''),
         ),
     )
 
-    state["total_features"] = total
-    state["passed_features"] = passed
-    state["pending_features"] = max(total - passed, 0)
+    state['total_features'] = total
+    state['passed_features'] = passed
+    state['pending_features'] = max(total - passed, 0)
+    state['has_task_contract'] = (workspace / 'docs' / 'TASK-HARNESS.md').exists() or (workspace / 'TASK-HARNESS.md').exists()
+    state['has_progress_log'] = has_progress_shards(workspace)
+    state['workspace_label'] = workspace_label
+    state['task_source'] = source or 'unknown'
 
     if pending_sorted:
         next_feat = pending_sorted[0]
-        state["next_feature"] = {
-            "id": next_feat.get("id", "unknown"),
-            "priority": next_feat.get("priority", "?"),
-            "description": next_feat.get("description", ""),
+        state['next_feature'] = {
+            'id': next_feat.get('id', 'unknown'),
+            'priority': next_feat.get('priority', '?'),
+            'description': next_feat.get('description', ''),
         }
 
-    state["has_task_contract"] = (workspace / "docs" / "TASK-HARNESS.md").exists() or (workspace / "TASK-HARNESS.md").exists()
-    state["has_progress_log"] = (workspace / "task-harness" / "progress" / "latest.txt").exists() or (workspace / "progress.txt").exists()
-    state["workspace_label"] = workspace_label
-    state["task_source"] = source
     return state
 
 
-def normalize_session_mode(raw: str) -> str:
+def normalize_session_mode(raw):
     value = str(raw or "").strip().lower()
     if value in {"hard_new_session", "hard", "new_session"}:
         return SESSION_MODE_HARD
@@ -279,7 +372,7 @@ def normalize_session_mode(raw: str) -> str:
     return SESSION_MODE_SOFT
 
 
-def get_session_mode(workspace: Path) -> str:
+def get_session_mode(workspace: Path):
     task_path = workspace / "config" / "task.json"
     if not task_path.exists():
         task_path = workspace / "task.json"
@@ -300,7 +393,7 @@ def get_session_mode(workspace: Path) -> str:
     return normalize_session_mode(harness.get("session_mode", ""))
 
 
-def get_session_context_notice() -> str:
+def get_session_context_notice():
     cwd = Path.cwd()
     workspace = cwd / HARNESS_DIR_NAME if (cwd / HARNESS_DIR_NAME).exists() else cwd
     mode = get_session_mode(workspace)
@@ -345,25 +438,30 @@ def get_session_context_notice() -> str:
 
 
 def main():
-    hook_input = read_hook_input()
+    try:
+        hook_input = json.loads(sys.stdin.read() or "{}")
+    except (json.JSONDecodeError, ValueError):
+        hook_input = {}
     prompt_text = extract_prompt_text(hook_input)
 
     parts = []
     parts.append(run_auto_branch(prompt_text))
     parts.append(get_session_context_notice())
 
+    # Git info
     git_info = get_git_info()
-    if git_info.get("branch"):
+    if git_info.get('branch'):
         parts.append(f"Git branch: {git_info['branch']}")
-    if git_info.get("recent_commits"):
+    if git_info.get('recent_commits'):
         parts.append(f"Recent commits:\n{git_info['recent_commits']}")
 
+    # Project state
     state = get_project_state()
-    if state.get("active_specs"):
+    if state.get('active_specs'):
         parts.append(f"Active specs: {', '.join(state['active_specs'])}")
-    if state.get("active_contracts"):
+    if state.get('active_contracts'):
         parts.append(f"Active contracts: {', '.join(state['active_contracts'])}")
-    if state.get("active_plans"):
+    if state.get('active_plans'):
         parts.append(f"Active plans: {', '.join(state['active_plans'])}")
 
     task_state = get_task_harness_state()
@@ -373,21 +471,21 @@ def main():
             f"{task_state.get('passed_features', 0)}/{task_state.get('total_features', 0)} passed, "
             f"{task_state.get('pending_features', 0)} pending"
         )
-        if task_state.get("next_feature"):
-            next_feat = task_state["next_feature"]
+        if task_state.get('next_feature'):
+            next_feat = task_state['next_feature']
             parts.append(
                 "Next feature: "
                 f"[{next_feat.get('id')}] P{next_feat.get('priority')} {next_feat.get('description')}"
             )
-        if not task_state.get("has_task_contract"):
+        if not task_state.get('has_task_contract'):
             parts.append(
-                "Warning: task harness state exists but "
+                'Warning: task harness state exists but '
                 f"{task_state.get('workspace_label', '')}docs/TASK-HARNESS.md is missing."
             )
-        if not task_state.get("has_progress_log"):
+        if not task_state.get('has_progress_log'):
             parts.append(
-                "Warning: task harness state exists but "
-                f"{task_state.get('workspace_label', '')}task-harness/progress/latest.txt is missing."
+                'Warning: task harness state exists but '
+                f"{task_state.get('workspace_label', '')}task-harness/progress/YYYY-MM/*.md is missing."
             )
     if should_inject_sql_orm_rules(prompt_text):
         parts.append(SQL_ORM_RULE_CARD)
@@ -397,25 +495,19 @@ def main():
     )
 
     if not parts:
-        emit({})
+        print(json.dumps({}))
         return
 
     message = (
         "Project context:\n"
         + "\n".join(parts)
-        + "\n\nUse this context to understand project state. "
-        + "Read only relevant specs/contracts/plans/task files."
+        + "\n\nUse this context to understand the current state. "
+        + "Read relevant specs/contracts/plans/task files as needed "
+        + "(context budget: only read what you need)."
     )
 
-    emit(
-        {
-            "hookSpecificOutput": {
-                "hookEventName": "UserPromptSubmit",
-                "additionalContext": message,
-            }
-        }
-    )
+    print(json.dumps({"systemMessage": message}))
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
