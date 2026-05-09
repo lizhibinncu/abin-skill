@@ -10,7 +10,7 @@ checklist before marking work done catches issues that would otherwise slip thro
 
 Hook output format:
 - {"systemMessage": "..."} to inject context without blocking
-- {"decision": "block", "reason": "..."} to block completion when passed features miss required artifacts
+- {"decision": "block", "reason": "..."} to block completion when passed features miss required artifacts or QA gate
 """
 
 import json
@@ -36,7 +36,8 @@ CHECKLIST = [
 
 TASK_HARNESS_CHECKLIST = [
     "12. 若本轮映射到 task-harness 任务，passes=true 前单元测试是否已通过？",
-    "13. QA 报告是否已记录（非阻塞），进度日志是否已更新？",
+    "13. 若 contract 存在 required 集成测试矩阵，QA result JSON 是否 gate_status=PASS？",
+    "14. QA 报告与进度日志是否已更新？",
 ]
 
 
@@ -178,6 +179,86 @@ def passed_feature_artifact_errors(workspace: Path) -> list[str]:
     return errors
 
 
+def split_markdown_row(line: str) -> list[str]:
+    text = line.strip()
+    if not text.startswith("|"):
+        return []
+    return [cell.strip().lower() for cell in text.strip("|").split("|")]
+
+
+def is_separator_row(cells: list[str]) -> bool:
+    return bool(cells) and all(set(cell.replace(":", "")) <= {"-"} for cell in cells if cell)
+
+
+def contract_has_required_gate(contract_path: Path) -> bool:
+    try:
+        lines = contract_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    in_matrix = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            in_matrix = "集成测试矩阵" in stripped or "Integration Test Matrix" in stripped
+            continue
+        if not in_matrix:
+            continue
+        cells = split_markdown_row(stripped)
+        if not cells or is_separator_row(cells):
+            continue
+        if "required" in cells or "阻塞" in cells or "必须" in cells:
+            return True
+    return False
+
+
+def qa_result_path(workspace: Path, feature: dict) -> Path:
+    raw_path = str(feature.get("qa_report_path", "")).strip()
+    if raw_path:
+        report_path = resolve_path(workspace, raw_path)
+        if report_path.suffix:
+            return report_path.with_suffix(".result.json")
+        return report_path.parent / f"{report_path.name}.result.json"
+    feature_id = str(feature.get("id", "unknown")).strip() or "unknown"
+    return workspace / "docs" / "qa" / f"{feature_id}.result.json"
+
+
+def qa_gate_passed(result_path: Path) -> tuple[bool, str]:
+    if not result_path.exists():
+        return False, f"QA result missing -> {result_path}"
+    data = load_json(result_path)
+    if not isinstance(data, dict):
+        return False, f"QA result invalid -> {result_path}"
+    if str(data.get("gate_status", "")).strip().upper() != "PASS":
+        summary = data.get("summary", {})
+        return False, f"QA gate not PASS -> {result_path} summary={summary}"
+    return True, ""
+
+
+def passed_feature_qa_gate_errors(workspace: Path) -> list[str]:
+    errors = []
+    seen = set()
+    for feature_path in [*task_paths(workspace), *bucket_paths(workspace)]:
+        if not feature_path.exists():
+            continue
+        data = load_json(feature_path)
+        for feature in features_from_payload(data):
+            if not bool(feature.get("passes")):
+                continue
+            feature_id = str(feature.get("id", "unknown")).strip() or "unknown"
+            dedupe_key = (feature_id, str(feature_path))
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            contract_raw = str(feature.get("contract_path", "")).strip()
+            contract_path = resolve_path(workspace, contract_raw)
+            if not contract_raw or not contract_path.exists() or not contract_has_required_gate(contract_path):
+                continue
+            ok, reason = qa_gate_passed(qa_result_path(workspace, feature))
+            if not ok:
+                errors.append(f"- {feature_id}: {reason} (task source: {feature_path})")
+    return errors
+
+
 def main():
     # Read hook input from stdin
     try:
@@ -211,12 +292,13 @@ def main():
         checklist.extend(TASK_HARNESS_CHECKLIST)
 
     artifact_errors = passed_feature_artifact_errors(workspace) if has_task_harness else []
-    if artifact_errors:
+    qa_gate_errors = passed_feature_qa_gate_errors(workspace) if has_task_harness else []
+    if artifact_errors or qa_gate_errors:
         message = (
-            "Artifact gate failed: features marked passes=true must have real spec and contract files.\n"
-            + "\n".join(artifact_errors[:20])
-            + ("\n- ... more missing artifacts omitted." if len(artifact_errors) > 20 else "")
-            + "\n\nFix by creating/updating the missing spec/contract files, or set passes=false until they exist."
+            "Completion gate failed: features marked passes=true must have real spec/contract files and required QA Gate PASS.\n"
+            + "\n".join([*artifact_errors, *qa_gate_errors][:20])
+            + ("\n- ... more gate errors omitted." if len([*artifact_errors, *qa_gate_errors]) > 20 else "")
+            + "\n\nFix by creating/updating artifacts, rerun qa_runner.py, or set passes=false until gates pass."
         )
         emit({"decision": "block", "reason": message})
         return

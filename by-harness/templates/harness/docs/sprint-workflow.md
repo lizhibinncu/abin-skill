@@ -72,7 +72,7 @@ Generator 会：
 
 Evaluator 使用 Java 工程验证策略：
 1. **单元层**：读源码校验逻辑，并运行可用单元测试
-2. **集成层**：运行可用集成测试，覆盖数据库、缓存、消息、RPC 等触发点
+2. **集成层**：读取 contract 集成测试矩阵，运行 Testcontainers / Failsafe 集成测试，覆盖数据库、缓存、消息、RPC、外部 HTTP、事务、幂等和补偿等触发点
 3. **契约层**：逐条对照 contract、Java 总门禁和触发维度分片规则
 4. **构建层**：检查编译、依赖、打包或项目既有质量门禁
 
@@ -81,11 +81,11 @@ Evaluator 使用 Java 工程验证策略：
 - FAIL：标准未满足，附失败细节、复现步骤、修复建议
 
 **评分公式**：`分数 = (通过标准条数 / 标准总条数) * 100`  
-**执行门禁**：单元测试通过（QA 报告非阻塞）
+**执行门禁**：单元测试通过、`convention-check` 无 fail，且 contract 中 required 集成测试全部通过
 
 **阶段流转条件**：
-- 单元测试通过：进入阶段 6（Complete）
-- 单元测试失败：进入阶段 5（Fix）
+- required QA Gate 通过：进入阶段 6（Complete）
+- 单元测试、convention-check 或 required 集成测试失败：进入阶段 5（Fix）
 
 ## 阶段 5：Fix Loop（修复循环）
 
@@ -128,7 +128,7 @@ Evaluator 使用 Java 工程验证策略：
    - 剩余问题或技术债
 
 若项目启用了 task-harness（存在 `.harness/task-harness/index.json`）：
-- 单元测试通过且 `spec_path` / `contract_path` 文件真实存在后，才可更新对应 feature 的 `passes=true`
+- 单元测试通过、required QA Gate 通过，且 `spec_path` / `contract_path` 文件真实存在后，才可更新对应 feature 的 `passes=true`
 - 同步在 `.harness/task-harness/progress/YYYY-MM/<timestamp>-<feature-id>.md` 写入该 feature 的闭环记录
 
 ## 上下文重置（Context Reset）与压缩（Compaction）的取舍

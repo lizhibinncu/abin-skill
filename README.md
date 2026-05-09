@@ -30,7 +30,7 @@ santong-skills/
 read task -> plan -> build -> qa -> fix -> mark_pass -> session_close
 ```
 
-当前运行时版本为 `2.5.0`，版本号在以下位置保持一致：
+当前运行时版本为 `2.6.0`，版本号在以下位置保持一致：
 
 - `by-harness/scripts/scaffold.py` 的 `HARNESS_RUNTIME_VERSION`
 - `by-harness/scripts/update_runtime.py` 的 `LATEST_RUNTIME_VERSION`
@@ -73,8 +73,9 @@ CLAUDE.md
 - `session_close.py`：写入会话进度、刷新 latest 快照，并给出下一任务建议。
 - `task_switch.py`：在当前分支继续下一个任务，并触发运行时检查。
 - `update_runtime.py`：做版本化升级、flat-to-grouped 迁移、manifest 拉取与 checksum 校验。
+- `qa_runner.py` / `qa_report.py` / `qa_gate.py` / `testcontainers_doctor.py`：执行 QA Gate，解析 Surefire/Failsafe 报告，并将 required 集成测试门禁绑定回 contract。
 - Java 规则：下发 Java 总门禁、分片规则和分布式 Java gate，约束 spec、contract、build、qa 全链路。
-- Artifact gate：任务标记 `passes=true` 前，必须有真实落盘的 `spec_path` 与 `contract_path`。
+- Artifact + QA gate：任务标记 `passes=true` 前，必须有真实落盘的 `spec_path` 与 `contract_path`，且 required QA Gate 通过。
 
 ### 常用命令
 
@@ -120,6 +121,13 @@ python3 .harness/scripts/session_close.py \
 
 ```bash
 python3 .harness/scripts/task_switch.py continue --target-dir "."
+```
+
+执行 QA Gate：
+
+```bash
+python3 .harness/scripts/qa_runner.py --target-dir "." --contract ".harness/docs/contracts/<feature>.md"
+python3 .harness/scripts/qa_gate.py --target-dir "." --result-json ".harness/docs/qa/<feature>.result.json"
 ```
 
 手动检查或升级运行时：

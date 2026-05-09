@@ -30,7 +30,7 @@ argument-hint: 功能描述（1-4 句话）
 - 将“如无必要，勿增实体”和最小成本方案转成可验收清单
 - 为每条标准指定验证方法
 - 若涉及 Java，将 Java 总门禁、触发维度核心门禁与分布式 Java 门禁转成可验收清单
-- 设置执行门禁：单元测试必须通过（QA 报告非阻塞）
+- 设置执行门禁：单元测试、convention-check 和 required QA Gate 必须通过
 - 设置最大迭代：`3`
 
 将契约提交给用户审批。
@@ -68,13 +68,14 @@ argument-hint: 功能描述（1-4 句话）
 
 ### 阶段 6：Complete（完成）
 
-若单元测试通过：
+若单元测试、convention-check 与 required QA Gate 通过：
 1. 在 contract 的 Sprint Log 里写入最终结果
 2. 确认该 feature 的 `spec_path` 与 `contract_path` 文件真实存在；缺任一文件时回到 Plan/Contract 阶段补齐
-3. 若存在 `.harness/task-harness/index.json`，将对应单任务 JSON 中该 feature 的 `passes` 更新为 `true`
-4. 调用 `.harness/scripts/session_close.py` 写入独立进度分片
-5. 调用 doc-gardener 智能体执行新鲜度审计
-6. 产出冲刺总结：
+3. 确认 `.harness/docs/qa/<feature>.result.json` 中 `gate_status=PASS`
+4. 若存在 `.harness/task-harness/index.json`，将对应单任务 JSON 中该 feature 的 `passes` 更新为 `true`
+5. 调用 `.harness/scripts/session_close.py` 写入独立进度分片
+6. 调用 doc-gardener 智能体执行新鲜度审计
+7. 产出冲刺总结：
    - 已构建功能
    - 最终评估分数
    - 使用迭代次数

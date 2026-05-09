@@ -6,7 +6,7 @@
 - **创建时间（Created）**：{{DATE}}
 - **状态（Status）**：draft
 - **最大迭代次数（Max Iterations）**：3
-- **执行门禁（Execution Gate）**：单元测试通过（QA 报告非阻塞）
+- **执行门禁（Execution Gate）**：单元测试通过、`convention-check` 无 fail，且 required 集成测试门禁通过
 
 ## 规范引用（Norm References）
 
@@ -43,7 +43,7 @@
 
 ## 验收标准（Acceptance Criteria）
 
-每条标准都必须可机器验证。
+每条标准都必须可验证；涉及真实数据库、缓存、消息、外部 HTTP/RPC、事务、幂等、补偿或发布停机风险时，必须在“集成测试矩阵”中补充 Testcontainers 验证证据。
 
 | # | 标准（Criterion） | 验证方法（Verification Method） | 状态（Status） |
 |---|-----------|-------------------|--------|
@@ -57,7 +57,20 @@
 
 - **unit**：阅读代码并验证逻辑
 - **build**：编译/构建成功
+- **integration**：通过 Testcontainers 或项目既有集成测试运行真实依赖链路
 - **manual**：需要用户手动验证
+
+## 集成测试矩阵（Integration Test Matrix）
+
+仅在验收项触发真实依赖时填写。没有触发时保留表格并写“无”。门禁取值：
+
+- `required`：失败则禁止 `passes=true`
+- `advisory`：失败进入 QA 报告，但不阻塞任务通过
+- `manual`：机器无法完整验证，必须在 QA 报告中列人工确认项
+
+| ID | 验收项 | 触发依赖 | Testcontainers | 测试类 | 核心断言 | 异常场景 | 门禁 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| IT-01 | 无 | 无 | 无 | 无 | 无 | 无 | advisory |
 
 ### Java 总门禁（若适用，每次 Java 修改必须满足）
 
@@ -114,6 +127,7 @@
 - [ ] 无硬编码密码、token、API key、私钥、签名密钥或授权值
 - [ ] 受保护操作有鉴权、输入校验和必要的限流/审计
 - [ ] 核心业务逻辑和公共 API 变更覆盖正常/异常路径测试
+- [ ] 触发真实依赖的验收项已进入集成测试矩阵，并明确 required/advisory/manual
 - [ ] 监控指标标签基数受控，不使用 raw ID 作为高基数 label
 - [ ] 生产影响变更写明发布验证、灰度、回滚或人工确认方案
 

@@ -267,6 +267,85 @@ def missing_required_artifacts(workspace_dir: Path, feature) -> list[str]:
     return errors
 
 
+def split_markdown_row(line: str) -> list[str]:
+    text = line.strip()
+    if not text.startswith("|"):
+        return []
+    return [cell.strip().lower() for cell in text.strip("|").split("|")]
+
+
+def is_markdown_separator(cells: list[str]) -> bool:
+    return bool(cells) and all(set(cell.replace(":", "")) <= {"-"} for cell in cells if cell)
+
+
+def contract_has_required_gate(contract_path: Path) -> bool:
+    try:
+        lines = contract_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    in_matrix = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            in_matrix = "集成测试矩阵" in stripped or "Integration Test Matrix" in stripped
+            continue
+        if not in_matrix:
+            continue
+        cells = split_markdown_row(stripped)
+        if not cells or is_markdown_separator(cells):
+            continue
+        if "required" in cells or "阻塞" in cells or "必须" in cells:
+            return True
+    return False
+
+
+def qa_result_path_for_feature(workspace_dir: Path, feature) -> Path:
+    raw_path = str(feature.get("qa_report_path", "")).strip() if feature else ""
+    if raw_path:
+        report_path = resolve_artifact_path(workspace_dir, raw_path)
+        if report_path.suffix:
+            return report_path.with_suffix(".result.json")
+        return report_path.parent / f"{report_path.name}.result.json"
+    feature_id = str(feature.get("id", "unknown")).strip() if feature else "unknown"
+    return workspace_dir / "docs" / "qa" / f"{safe_filename(feature_id)}.result.json"
+
+
+def load_qa_gate_status(workspace_dir: Path, feature) -> dict:
+    result = {
+        "required": False,
+        "status": "NOT_REQUIRED",
+        "result_path": "",
+        "summary": {},
+        "error": "",
+    }
+    if not feature:
+        return result
+    contract_raw = str(feature.get("contract_path", "")).strip()
+    contract_path = resolve_artifact_path(workspace_dir, contract_raw)
+    if not contract_raw or not contract_path.exists() or not contract_has_required_gate(contract_path):
+        return result
+    result["required"] = True
+    result_path = qa_result_path_for_feature(workspace_dir, feature)
+    result["result_path"] = str(result_path)
+    if not result_path.exists():
+        result["status"] = "MISSING"
+        result["error"] = f"QA result JSON missing: {result_path}"
+        return result
+    try:
+        data = load_json(result_path)
+    except HarnessJsonError as exc:
+        result["status"] = "INVALID"
+        result["error"] = str(exc)
+        return result
+    result["status"] = str(data.get("gate_status", "")).strip().upper() or "UNKNOWN"
+    summary = data.get("summary", {})
+    if isinstance(summary, dict):
+        result["summary"] = summary
+    if result["status"] != "PASS":
+        result["error"] = f"QA gate status is {result['status']}: {result_path}"
+    return result
+
+
 def sample_feature_ids(features, limit: int = 12):
     ids = []
     for feat in features:
@@ -317,6 +396,7 @@ def build_session_entry(
     total: int,
     passed: int,
     next_feature,
+    qa_gate_status: dict | None = None,
 ):
     now = datetime.now()
     feat_id = task_store.display_label(feature) if feature else "n/a"
@@ -345,6 +425,11 @@ def build_session_entry(
             f"  - contract: {feature.get('contract_path', 'n/a')}\n"
             f"  - qa_report: {feature.get('qa_report_path', 'n/a')}\n"
         )
+    if qa_gate_status:
+        entry += (
+            f"  - qa_gate: {qa_gate_status.get('status', 'n/a')}\n"
+            f"  - qa_gate_result: {qa_gate_status.get('result_path', 'n/a') or 'n/a'}\n"
+        )
 
     entry += "\n完成工作:\n"
     for line in note_lines:
@@ -358,7 +443,7 @@ def build_session_entry(
         "  1. bash .harness/scripts/init.sh（legacy 项目可用 bash .harness/init.sh）\n"
         "  2. 阅读 AGENTS.md 与 .harness/docs/TASK-HARNESS.md\n"
         f"  3. 优先处理: {next_text}\n"
-        "  4. 执行 read task -> plan -> build -> qa(non-blocking) -> fix -> mark_pass\n"
+        "  4. 执行 read task -> plan -> build -> qa gate -> fix -> mark_pass\n"
     )
     return entry
 
@@ -377,7 +462,7 @@ def write_file_task_session_log(log_path: Path, entry: str) -> int:
     return 1
 
 
-def build_latest_snapshot(feature, outcome: str, qa_score: float, total: int, passed: int, next_feature, log_path: Path):
+def build_latest_snapshot(feature, outcome: str, qa_score: float, total: int, passed: int, next_feature, log_path: Path, qa_gate_status: dict | None = None):
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     feat_id = task_store.display_label(feature) if feature else "n/a"
     feat_desc = str(feature.get("description", "未指定任务")) if feature else "未指定任务"
@@ -393,6 +478,7 @@ def build_latest_snapshot(feature, outcome: str, qa_score: float, total: int, pa
         f"- 当前任务: {feat_id} - {feat_desc}\n"
         f"- 会话结果: {outcome}\n"
         f"- QA 分数: {qa_text}\n"
+        f"- QA Gate: {(qa_gate_status or {}).get('status', 'n/a')}\n"
         f"- 任务进度: {passed}/{total}\n"
         f"- 下一任务建议: {next_text}\n"
         f"- 会话日志文件: {log_path.name}\n\n"
@@ -403,7 +489,7 @@ def build_latest_snapshot(feature, outcome: str, qa_score: float, total: int, pa
     )
 
 
-def build_session_meta(feature, next_feature, outcome: str, context_mode: str):
+def build_session_meta(feature, next_feature, outcome: str, context_mode: str, qa_gate_status: dict | None = None):
     closed_id = str(feature.get("id", "n/a")) if feature else "n/a"
     closed_desc = str(feature.get("description", "未指定任务")) if feature else "未指定任务"
     closed_display = task_store.display_label(feature) if feature else "n/a"
@@ -415,6 +501,8 @@ def build_session_meta(feature, next_feature, outcome: str, context_mode: str):
         "closed_feature_display": closed_display,
         "closed_feature_description": closed_desc,
         "outcome": outcome,
+        "qa_gate_status": (qa_gate_status or {}).get("status", ""),
+        "qa_gate_result": (qa_gate_status or {}).get("result_path", ""),
     }
     if next_feature:
         payload["next_feature_id"] = str(next_feature.get("id", ""))
@@ -474,6 +562,8 @@ def bump_session_context(workspace_dir: Path, meta: dict, context_mode: str) -> 
         "next_feature_display": meta.get("next_feature_display", ""),
         "next_feature_description": meta.get("next_feature_description", ""),
         "outcome": meta.get("outcome", ""),
+        "qa_gate_status": meta.get("qa_gate_status", ""),
+        "qa_gate_result": meta.get("qa_gate_result", ""),
     }
     dump_json(context_path, payload)
     return context_path, epoch
@@ -531,6 +621,17 @@ def main():
                 print(f"  - {error}")
             print("Create/update the missing spec and contract, or close with --outcome in-progress/blocked.")
             sys.exit(1)
+        qa_gate_status = load_qa_gate_status(workspace_dir, feature)
+        if qa_gate_status.get("required") and qa_gate_status.get("status") != "PASS":
+            print("Error: cannot close session as pass before required QA Gate passes.")
+            print(f"Feature: {feature.get('id', 'unknown')}")
+            print(f"  - status: {qa_gate_status.get('status')}")
+            print(f"  - result: {qa_gate_status.get('result_path') or 'n/a'}")
+            print(f"  - error: {qa_gate_status.get('error') or 'n/a'}")
+            print("Run .harness/scripts/qa_runner.py and fix required gate failures, or close with --outcome in-progress/blocked.")
+            sys.exit(1)
+    else:
+        qa_gate_status = load_qa_gate_status(workspace_dir, feature) if feature else {}
 
     total = len(features)
     passed = sum(1 for feat in features if bool(feat.get("passes")))
@@ -563,6 +664,7 @@ def main():
         total=total,
         passed=passed,
         next_feature=next_feature,
+        qa_gate_status=qa_gate_status,
     )
     if file_task_progress:
         session_no = write_file_task_session_log(session_log_path, entry)
@@ -579,6 +681,7 @@ def main():
             passed=passed,
             next_feature=next_feature,
             log_path=session_log_path,
+            qa_gate_status=qa_gate_status,
         )
         dump_text(snapshot_path, snapshot)
         print(f"Wrote session snapshot: {snapshot_path}")
@@ -592,6 +695,7 @@ def main():
             passed=passed,
             next_feature=next_feature,
             log_path=session_log_path,
+            qa_gate_status=qa_gate_status,
         )
         dump_text(snapshot_path, snapshot)
         print(f"Updated latest snapshot: {snapshot_path}")
@@ -601,6 +705,7 @@ def main():
         next_feature=next_feature,
         outcome=args.outcome,
         context_mode=context_mode,
+        qa_gate_status=qa_gate_status,
     )
     context_path, epoch = bump_session_context(
         workspace_dir=workspace_dir,

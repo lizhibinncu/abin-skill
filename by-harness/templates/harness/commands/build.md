@@ -27,6 +27,7 @@ argument-hint: 可选 - 指定 .harness/docs/specs/ 中要实现的 spec 文件
   - 本次冲刺的具体范围是什么？
   - 需要验证哪些验收标准？
   - 每条标准采用什么验证方式？
+  - 哪些验收项触发真实依赖，需要进入“集成测试矩阵”并标记 `required` / `advisory` / `manual`？
   - 若涉及 Java，Java 总门禁、魔法值治理、触发维度核心门禁、分布式 Java 门禁是否都有可验收条目？
 
 ### 3. 构建循环
@@ -40,9 +41,10 @@ argument-hint: 可选 - 指定 .harness/docs/specs/ 中要实现的 spec 文件
    - 若涉及 Java，确认业务状态、任务类型、动作类型、错误码、配置 key、阈值没有在条件分支、switch case 或配置读取中散落魔法字符串/魔法数字。
    - 若涉及 Java，逐项检查通用工程、分层与 DDD、Dubbo 与公共 API、日志与异常、持久化与基础设施、测试安全运维等触发维度。
    - 若涉及 Java，逐项检查分布式 Java 门禁；未触发需说明理由，触发时必须给出实现证据与人工确认项。
+   - 若 contract 集成测试矩阵存在 `required` 项，补齐或更新对应 `*IT.java` / 项目约定集成测试；不得只用 mock 替代真实 DB/Redis/MQ/HTTP/RPC/事务边界。
 3. **Evaluate**：调用 `evaluator` 按契约测试。
-4. **Gate**：检查单元测试是否通过。
-   - 若 PASS：冲刺完成（QA 报告保留为质量参考，不阻塞）。
+4. **Gate**：检查单元测试、convention-check 和 required QA Gate 是否通过。
+   - 若 PASS：冲刺完成。
    - 若 FAIL：把失败项回传给 `generator` 修复。
 
 ### 4. 最大迭代次数
@@ -54,9 +56,10 @@ argument-hint: 可选 - 指定 .harness/docs/specs/ 中要实现的 spec 文件
 
 ### 5. 完成收尾
 
-若单元测试通过：
+若单元测试、convention-check 与 required QA Gate 通过：
 - 更新契约中的冲刺日志。
 - 确认目标 feature 的 `spec_path` 与 `contract_path` 文件真实存在；缺任一文件时禁止 `passes=true`。
-- 若项目使用 task-harness（存在 `.harness/task-harness/index.json`），仅在单元测试通过且 spec/contract 文件存在后，更新对应单任务 JSON 的 `passes=true`。
+- 运行 `python3 .harness/scripts/qa_runner.py --target-dir . --contract <contract-file>`，确认 `.harness/docs/qa/<feature>.result.json` 中 `gate_status=PASS`。
+- 若项目使用 task-harness（存在 `.harness/task-harness/index.json`），仅在单元测试通过、required QA Gate 通过且 spec/contract 文件存在后，更新对应单任务 JSON 的 `passes=true`。
 - 通过 `.harness/scripts/session_close.py` 写入 `.harness/task-harness/progress/YYYY-MM/<timestamp>-<feature-id>.md`。
 - 询问用户是否执行 `doc-gardener` 做文档新鲜度检查。

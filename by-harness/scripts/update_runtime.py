@@ -37,7 +37,7 @@ LEGACY_TASK_FILE_NAME = "task.json"
 LEGACY_SESSION_CONTEXT_FILE_NAME = "session-context.json"
 LEGACY_SESSION_BOUNDARY_FILE_NAME = "session-boundary.json"
 LEGACY_TASK_CONTRACT_FILE_NAME = "TASK-HARNESS.md"
-LATEST_RUNTIME_VERSION = "2.5.0"
+LATEST_RUNTIME_VERSION = "2.6.0"
 DEFAULT_TASK_GLOBS = ("task-harness/tasks/*.json", "task-harness/tasks/**/*.json")
 RUNTIME_SCRIPT_NAMES = (
     "init.sh",
@@ -47,6 +47,10 @@ RUNTIME_SCRIPT_NAMES = (
     "task_store.py",
     "update_runtime.py",
     "upgrade_legacy_repo.py",
+    "qa_runner.py",
+    "qa_report.py",
+    "qa_gate.py",
+    "testcontainers_doctor.py",
 )
 RUNTIME_DOC_REL_PATHS = (
     "root/AGENTS.md",
@@ -141,6 +145,7 @@ MIGRATIONS: dict[str, tuple[str, str]] = {
     "2.3.9": ("2.3.10", "migrate_runtime_versioning"),
     "2.3.10": ("2.4.0", "migrate_file_tasks_storage"),
     "2.4.0": ("2.5.0", "migrate_file_tasks_storage"),
+    "2.5.0": ("2.6.0", "migrate_qa_gate_runtime"),
 }
 
 
@@ -691,6 +696,11 @@ def migrate_file_tasks_storage(harness_dir: Path, dry_run: bool) -> dict[str, in
     return stats
 
 
+def migrate_qa_gate_runtime(harness_dir: Path, dry_run: bool) -> dict[str, int]:
+    """Version marker migration for QA Gate runtime files shipped by manifest."""
+    return {"qa_gate_runtime": 0}
+
+
 def run_migration(step_name: str, harness_dir: Path, dry_run: bool) -> dict[str, int]:
     if step_name == "migrate_remove_branch_switching":
         return migrate_remove_branch_switching(harness_dir, dry_run)
@@ -698,6 +708,8 @@ def run_migration(step_name: str, harness_dir: Path, dry_run: bool) -> dict[str,
         return migrate_runtime_versioning(harness_dir, dry_run)
     if step_name == "migrate_file_tasks_storage":
         return migrate_file_tasks_storage(harness_dir, dry_run)
+    if step_name == "migrate_qa_gate_runtime":
+        return migrate_qa_gate_runtime(harness_dir, dry_run)
     raise RuntimeError(f"未知迁移步骤：{step_name}")
 
 

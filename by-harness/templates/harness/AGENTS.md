@@ -19,7 +19,7 @@
 |---|---|---|---|
 | `plan` | “plan login flow”, “write spec for X” | 澄清歧义、检查相关代码、编写 spec | `.harness/docs/specs/<feature>.md` |
 | `build` | “build latest spec”, “implement checkout spec” | 读取 spec+contract，按范围实现并自检 | 代码改动 + 冲刺报告 |
-| `qa` | “qa latest contract”, “evaluate feature X” | 读取 contract，逐条测试并评分（非阻塞） | 结构化 QA 报告 + 分数 |
+| `qa` | “qa latest contract”, “evaluate feature X” | 读取 contract，执行 QA Gate 并逐条评分 | 结构化 QA 报告 + result JSON + 分数 |
 | `sprint` | “sprint build auth”, “full cycle for X” | 依次执行 plan+contract+build+qa+fix | spec + contract + 实现 + 报告 |
 
 ## 执行契约
@@ -74,7 +74,12 @@
 - 每条标准状态仅允许：`PASS` / `FAIL` / `PARTIAL`。
 - 评分公式：
   - `score = (pass + 0.5 * partial) / total * 100`
-- QA 结果默认**非阻塞**（用于质量跟踪与修复建议）。
+- QA 结果按门禁级别生效：`required` 阻塞通过，`advisory` / `manual` 用于质量跟踪与人工确认。
+- contract 的集成测试矩阵支持 `required` / `advisory` / `manual`：
+  - `required`：失败则禁止 `passes=true`
+  - `advisory`：失败进入 QA 报告，不阻塞
+  - `manual`：列人工确认项，不计入机器通过率
+- 若 contract 含 required 集成测试，必须运行 `python3 .harness/scripts/qa_runner.py --target-dir . --contract <contract-file>`，并确认 QA result JSON 中 `gate_status=PASS`。
 - 每个 FAIL 必须包含：
   - 预期行为
   - 实际行为
@@ -127,14 +132,14 @@
 
 1. 从 `.harness/task-harness/tasks/*.json` 与 `.harness/task-harness/tasks/**/*.json` 选择优先级最高且 `passes=false` 的 feature；旧 bucket/feature_list 仅作兼容读取
 2. 严格执行 `plan -> contract -> build -> qa -> fix` 主流程
-3. 单元测试通过且 `spec_path` / `contract_path` 文件真实存在后，才可将该 feature 的 `passes` 置为 `true`
+3. 单元测试通过、convention-check 无 fail、required QA Gate 通过，且 `spec_path` / `contract_path` 文件真实存在后，才可将该 feature 的 `passes` 置为 `true`
 4. 通过 `.harness/scripts/session_close.py` 写入 `.harness/task-harness/progress/YYYY-MM/<timestamp>-<feature-id>.md`
 5. 若达到 3 轮仍失败，保持 `passes=false` 并继续下一个任务
 
 集成约束：
 - `AGENTS.md` 负责主闭环，不负责改任务定义
 - `.harness/docs/TASK-HARNESS.md` 负责任务追踪，不得覆盖主闭环规则
-- QA 结论用于质量跟踪，不作为阻塞门禁
+- QA 结论中的 required gate 是阻塞门禁；advisory/manual 用于质量跟踪和人工确认
 
 ## Codex Hook 运行时
 

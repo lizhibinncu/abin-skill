@@ -26,7 +26,7 @@ Harness Engineering Framework 的系统设计说明。
                     +-------- fix --------+
                               |
                               v
-                [单元测试通过?] --否--> 修复循环（最多 3 轮）
+                [QA Gate 通过?] --否--> 修复循环（最多 3 轮）
                               |
                             是
                               v
@@ -73,6 +73,10 @@ Codex 运行时：
 | /build 命令 | `.claude/commands/build.md` | 触发 generator + evaluator |
 | /qa 命令 | `.claude/commands/qa.md` | 独立执行评估 |
 | /sprint 命令 | `.claude/commands/sprint.md` | 执行全流程冲刺 |
+| QA Runner | `.harness/scripts/qa_runner.py` | 执行 convention-check、mvn test、mvn verify 并生成 QA Gate 结果 |
+| QA Report | `.harness/scripts/qa_report.py` | 解析 Surefire/Failsafe 报告并绑定 contract 集成测试矩阵 |
+| QA Gate | `.harness/scripts/qa_gate.py` | 根据 result JSON 判断 required 门禁是否通过 |
+| Testcontainers Doctor | `.harness/scripts/testcontainers_doctor.py` | 检查 Docker/Testcontainers 集成测试环境 |
 | 循环检测 | `.claude/hooks/loop-detector.py` | 阻止无效反复编辑 |
 | 完成前检查 | `.claude/hooks/pre-completion-check.py` | 完成前质量门禁 |
 | 上下文注入 | `.claude/hooks/context-injector.py` | 注入会话上下文 |
@@ -90,7 +94,8 @@ Codex 运行时：
 
 | MCP 工具 | 使用方 | 目的 |
 |----------|---------|---------|
-| JUnit / Maven / Gradle | Evaluator | 单元测试、集成测试、构建验证 |
+| JUnit / Maven / Gradle | Evaluator / QA Runner | 单元测试、集成测试、构建验证 |
+| Testcontainers / Docker | QA Runner | 真实依赖集成测试环境 |
 | convention-check | Evaluator | Java/MyBatis/SQL 机器检查 |
 | web_reader | Planner | 获取外部文档资料 |
 
@@ -115,11 +120,11 @@ Codex 运行时：
   v
 状态：VERIFYING（Evaluator 测试）
   |
-  [单元测试通过]
+  [QA Gate 通过]
   v
 状态：COMPLETE（文档更新，冲刺日志记录，必要时更新 passes）
   |
-  [单元测试失败 且迭代 < 3]
+  [单元测试、convention-check 或 required 集成测试失败 且迭代 < 3]
   v
 状态：FIXING（Generator 修复失败项）
   |

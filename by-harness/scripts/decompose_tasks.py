@@ -153,12 +153,12 @@ def build_feature(
             f"执行 plan：生成 {paths['spec_path']}",
             f"执行 contract：生成 {paths['contract_path']} 并明确验收标准与验证方式",
             "执行 build：按 contract 范围实现并完成自检（构建/单元测试/验收标准）",
-            f"执行 qa：生成 {paths['qa_report_path']}，作为非阻塞质量报告",
+            f"执行 qa gate：运行 qa_runner.py，生成 {paths['qa_report_path']} 与 result JSON",
             "若单元测试未通过，进入 fix 循环（最多 3 轮）",
-            "执行 mark_pass：单元测试通过且 spec/contract 文件已落盘后才可将 passes 置为 true；3 轮失败则保持 false 并继续下个任务",
+            "执行 mark_pass：单元测试、required QA Gate 通过且 spec/contract 文件已落盘后才可将 passes 置为 true；3 轮失败则保持 false 并继续下个任务",
         ],
         "passes": False,
-        "verification": "单元测试通过且 spec/contract 文件已落盘后才可判定通过；qa 报告为建议项，不阻塞流程",
+        "verification": "单元测试、required QA Gate 通过且 spec/contract 文件已落盘后才可判定通过；advisory/manual QA 结果必须记录",
         "created_at": now,
         "updated_at": now,
     }
@@ -394,7 +394,7 @@ def append_progress_note(workspace_dir: Path, added_tasks, bucket_id: str, mode:
         "新增任务:\n"
         f"{added_text}\n"
         f"任务桶: {bucket_id}\n"
-        "说明: 新任务已按 harness 闭环模板生成（read task/plan/build/qa(non-blocking)/fix/mark_pass）。\n"
+        "说明: 新任务已按 harness 闭环模板生成（read task/plan/build/qa gate/fix/mark_pass）。\n"
     )
 
     if mode in ("sharded", "file_tasks"):

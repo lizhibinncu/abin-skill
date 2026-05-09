@@ -39,6 +39,12 @@
 - 新增单元测试时遵循项目 JUnit、Mockito 约定。
 - 单元测试中 mock 外部依赖、时间、随机数、远程服务和消息组件。
 - 关键持久化或跨组件流程可按项目能力补充集成测试。
+- 触发真实数据库、Redis、MQ、外部 HTTP/RPC、事务、幂等、补偿或发布停机风险时，必须在 contract 的“集成测试矩阵”中声明是否需要 Testcontainers 集成测试。
+- `*Test.java` 默认作为单元测试，`*IT.java` 或项目既有 `*IntegrationTest.java` 作为集成测试入口，由 `mvn verify` / Failsafe 执行。
+- required 集成测试必须使用 Testcontainers 或项目批准的等价真实依赖测试设施，不能只用 Mockito 证明数据库、缓存、消息、外部服务或事务边界。
+- Testcontainers 镜像版本必须固定，禁止使用 `latest`；测试数据必须自建自清理，不依赖执行顺序。
+- Java 8 或老 Spring Boot 项目优先使用 `@DynamicPropertySource`、`ApplicationContextInitializer` 或项目既有测试配置注入容器地址，不强制依赖 Spring Boot 3.1+ `@ServiceConnection`。
+- CI 或本地环境没有 Docker 时，required 项必须标记 FAIL 或 blocked，并写明最小复现命令与环境阻塞原因。
 - 公共 API 变更覆盖正常路径、参数错误、业务失败、外部依赖失败。
 - 无法运行测试时，必须写明最小建议验证命令和阻塞原因。
 
@@ -74,6 +80,14 @@
 mvn verify
 ```
 
+QA Gate 验证：
+
+```bash
+python3 .harness/scripts/testcontainers_doctor.py --target-dir .
+python3 .harness/scripts/qa_runner.py --target-dir . --contract <contract-file>
+python3 .harness/scripts/qa_gate.py --target-dir . --result-json .harness/docs/qa/<feature>.result.json
+```
+
 建议扫描：
 
 ```bash
@@ -86,6 +100,8 @@ rg -n "password|secret|token|authorization|privateKey|apiKey" src/main/java src/
 
 - `convention-check` 会拦截疑似硬编码密钥或敏感日志。
 - `convention-check` 会拦截 `logback` 依赖链。
+- `qa_runner.py` 会解析 contract 集成测试矩阵、运行 `mvn test` / `mvn verify`、读取 Surefire/Failsafe XML，并生成 QA Gate result JSON。
+- `qa_gate.py` 会根据 result JSON 阻塞 required 集成测试失败的任务通过。
 - 人工验收必须确认输入校验、授权、限流、审计影响已说明。
 - 人工验收必须确认测试或最小验证命令已记录。
 - 人工验收必须确认生产影响、监控、发布、回滚和文档已进入 contract。
