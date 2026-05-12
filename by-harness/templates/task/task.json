@@ -30,6 +30,7 @@
       "session_context": ".harness/config/session-context.json",
       "session_boundary": ".harness/config/session-boundary.json",
       "init_script": ".harness/scripts/init.sh",
+      "quick_fix_classifier": ".harness/scripts/quick_fix_classifier.py",
       "main_contract": "AGENTS.md",
       "task_contract": ".harness/docs/TASK-HARNESS.md"
     },
@@ -41,6 +42,8 @@
       "读取 .harness/task-harness/progress/YYYY-MM/*.md 获取上次进度；latest.txt 只作 legacy 兼容快照",
       "按 .harness/config/update-policy.json 在本地命令触发时定时检查远程运行时更新",
       "读取 .harness/task-harness/index.json 与 task-harness/tasks/*.json、task-harness/tasks/**/*.json 定位下一个未完成功能",
+      "明确小 bug 可先运行 quick_fix_classifier.py 自动初判；high 走 quick_fix，medium 询问用户，low 回到标准 feature 流程",
+      "quick_fix 只写进度日志，不得绕过 feature 的 spec_path/contract_path/passes 门禁",
       "必须执行 plan/build/qa gate，单元测试、required QA Gate 通过且 spec/contract 已落盘后才可标记完成",
       "所有新增/修改函数、方法必须补齐中文注释（用途、参数、返回值、副作用）",
       "每个 feature 必须维护 spec_path/contract_path/qa_report_path",

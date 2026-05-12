@@ -8,6 +8,14 @@
 
 每个功能都应经过 6 个阶段的冲刺循环。该流程落实以下黄金原则：先有 spec、标准可测、先自检、契约驱动。
 
+明确、小、可验证的 bug 可以先走 Quick Fix 分流。Quick Fix 是轻量旁路，不是跳过验证：它只省略完整 spec/contract 前置工件，仍必须自动分类、定向验证、post-diff 复核，并写入 quick close 日志。
+
+```bash
+python3 .harness/scripts/quick_fix_classifier.py --target-dir . --prompt "<bug 描述>"
+```
+
+只有 `confidence=high` 且 `recommended_mode=quick_fix` 时才可直接轻量修复；`medium` 先询问用户，`low` 回到完整冲刺循环。
+
 ## 阶段 1：Plan（规划）
 
 **智能体（Agent）**：Planner  

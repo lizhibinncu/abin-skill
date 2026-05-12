@@ -47,6 +47,16 @@ def parse_args():
     parser.add_argument("--target-dir", required=True, help="目标项目目录")
     parser.add_argument("--feature-id", default="", help="本次会话处理的 feature ID（可选）")
     parser.add_argument(
+        "--quick-fix",
+        action="store_true",
+        help="按快速修复收口：允许无 feature/spec/contract，只写 quick-fix 进度日志",
+    )
+    parser.add_argument(
+        "--title",
+        default="",
+        help="quick-fix 标题；未提供时使用 note 摘要或 quick-fix",
+    )
+    parser.add_argument(
         "--outcome",
         default="in-progress",
         help="本次会话结果：pass/fail/blocked/in-progress（completed 兼容映射为 pass）",
@@ -397,12 +407,23 @@ def build_session_entry(
     passed: int,
     next_feature,
     qa_gate_status: dict | None = None,
+    quick_fix: bool = False,
+    quick_fix_title: str = "",
 ):
     now = datetime.now()
-    feat_id = task_store.display_label(feature) if feature else "n/a"
-    feat_desc = str(feature.get("description", "未指定任务")) if feature else "未指定任务"
+    if quick_fix:
+        title = quick_fix_title or "quick-fix"
+        feat_id = f"quick-fix - {title}"
+        feat_desc = f"快速修复：{title}"
+    else:
+        feat_id = task_store.display_label(feature) if feature else "n/a"
+        feat_desc = str(feature.get("description", "未指定任务")) if feature else "未指定任务"
     qa_text = f"{qa_score:.1f}" if qa_score >= 0 else "n/a"
-    note_lines = notes if notes else ["本轮按闭环推进任务，详见提交与 QA 报告。"]
+    note_lines = notes if notes else [
+        "本轮按 quick-fix 处理明确小修复，详见 diff 与验证命令。"
+        if quick_fix
+        else "本轮按闭环推进任务，详见提交与 QA 报告。"
+    ]
     next_text = (
         task_summary(next_feature)
         if next_feature
@@ -415,11 +436,14 @@ def build_session_entry(
         "----------------------------------------\n"
         f"时间: {now.strftime('%Y-%m-%d %H:%M')}\n\n"
         "结果:\n"
+        f"  - work_mode: {'quick_fix' if quick_fix else 'standard'}\n"
         f"  - outcome: {outcome}\n"
         f"  - qa_score: {qa_text}\n"
     )
 
-    if feature:
+    if quick_fix and feature:
+        entry += f"  - linked_feature: {task_store.display_label(feature)}\n"
+    elif feature:
         entry += (
             f"  - spec: {feature.get('spec_path', 'n/a')}\n"
             f"  - contract: {feature.get('contract_path', 'n/a')}\n"
@@ -443,8 +467,11 @@ def build_session_entry(
         "  1. bash .harness/scripts/init.sh（legacy 项目可用 bash .harness/init.sh）\n"
         "  2. 阅读 AGENTS.md 与 .harness/docs/TASK-HARNESS.md\n"
         f"  3. 优先处理: {next_text}\n"
-        "  4. 执行 read task -> plan -> build -> qa gate -> fix -> mark_pass\n"
     )
+    if quick_fix:
+        entry += "  4. 若 quick-fix 复核触发高风险或 diff 超阈值，补 spec/contract 后切回标准流程\n"
+    else:
+        entry += "  4. 执行 read task -> plan -> build -> qa gate -> fix -> mark_pass\n"
     return entry
 
 
@@ -462,10 +489,25 @@ def write_file_task_session_log(log_path: Path, entry: str) -> int:
     return 1
 
 
-def build_latest_snapshot(feature, outcome: str, qa_score: float, total: int, passed: int, next_feature, log_path: Path, qa_gate_status: dict | None = None):
+def build_latest_snapshot(
+    feature,
+    outcome: str,
+    qa_score: float,
+    total: int,
+    passed: int,
+    next_feature,
+    log_path: Path,
+    qa_gate_status: dict | None = None,
+    quick_fix: bool = False,
+    quick_fix_title: str = "",
+):
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    feat_id = task_store.display_label(feature) if feature else "n/a"
-    feat_desc = str(feature.get("description", "未指定任务")) if feature else "未指定任务"
+    if quick_fix:
+        feat_id = "quick-fix"
+        feat_desc = quick_fix_title or "quick-fix"
+    else:
+        feat_id = task_store.display_label(feature) if feature else "n/a"
+        feat_desc = str(feature.get("description", "未指定任务")) if feature else "未指定任务"
     qa_text = f"{qa_score:.1f}" if qa_score >= 0 else "n/a"
     next_text = (
         task_summary(next_feature)
@@ -475,6 +517,7 @@ def build_latest_snapshot(feature, outcome: str, qa_score: float, total: int, pa
     return (
         "# LATEST PROGRESS SNAPSHOT\n\n"
         f"- 更新时间: {now}\n"
+        f"- 工作模式: {'quick_fix' if quick_fix else 'standard'}\n"
         f"- 当前任务: {feat_id} - {feat_desc}\n"
         f"- 会话结果: {outcome}\n"
         f"- QA 分数: {qa_text}\n"
@@ -489,14 +532,29 @@ def build_latest_snapshot(feature, outcome: str, qa_score: float, total: int, pa
     )
 
 
-def build_session_meta(feature, next_feature, outcome: str, context_mode: str, qa_gate_status: dict | None = None):
-    closed_id = str(feature.get("id", "n/a")) if feature else "n/a"
-    closed_desc = str(feature.get("description", "未指定任务")) if feature else "未指定任务"
-    closed_display = task_store.display_label(feature) if feature else "n/a"
+def build_session_meta(
+    feature,
+    next_feature,
+    outcome: str,
+    context_mode: str,
+    qa_gate_status: dict | None = None,
+    quick_fix: bool = False,
+    quick_fix_title: str = "",
+):
+    if quick_fix:
+        closed_id = str(feature.get("id", "quick-fix")) if feature else "quick-fix"
+        closed_desc = quick_fix_title or "quick-fix"
+        closed_display = f"quick-fix - {closed_desc}"
+    else:
+        closed_id = str(feature.get("id", "n/a")) if feature else "n/a"
+        closed_desc = str(feature.get("description", "未指定任务")) if feature else "未指定任务"
+        closed_display = task_store.display_label(feature) if feature else "n/a"
     payload = {
         "context_mode": context_mode,
         "generated_by": "session_close.py",
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "work_mode": "quick_fix" if quick_fix else "standard",
+        "quick_fix_title": quick_fix_title if quick_fix else "",
         "closed_feature_id": closed_id,
         "closed_feature_display": closed_display,
         "closed_feature_description": closed_desc,
@@ -520,6 +578,17 @@ def safe_filename(value: str, fallback: str = "task") -> str:
     text = re.sub(r"\s+", "-", text)
     text = re.sub(r"-{2,}", "-", text)
     return text.strip("-. _") or fallback
+
+
+def quick_fix_title_from_args(args) -> str:
+    title = str(args.title or "").strip()
+    if title:
+        return title
+    for note in args.note:
+        text = str(note or "").strip()
+        if text:
+            return text[:80]
+    return "quick-fix"
 
 
 def use_file_task_progress(workspace_dir: Path, entries) -> bool:
@@ -555,6 +624,8 @@ def bump_session_context(workspace_dir: Path, meta: dict, context_mode: str) -> 
         "context_mode": context_mode,
         "reset_required": context_mode == SESSION_MODE_SOFT,
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "work_mode": meta.get("work_mode", "standard"),
+        "quick_fix_title": meta.get("quick_fix_title", ""),
         "closed_feature_id": meta.get("closed_feature_id", ""),
         "closed_feature_display": meta.get("closed_feature_display", ""),
         "closed_feature_description": meta.get("closed_feature_description", ""),
@@ -588,6 +659,7 @@ def main():
     workspace_dir = detect_workspace_dir(target_dir)
     session_control = load_session_control(workspace_dir)
     context_mode = session_control["context_mode"]
+    quick_fix_title = quick_fix_title_from_args(args)
 
     try:
         entries = task_store.load_task_entries(workspace_dir)
@@ -609,10 +681,10 @@ def main():
         else:
             print("Available feature ids: none (task storage may be empty or misconfigured)")
         sys.exit(1)
-    if args.outcome == "pass" and features and feature is None:
+    if args.outcome == "pass" and features and feature is None and not args.quick_fix:
         print("Error: --feature-id is required when --outcome pass, so spec_path and contract_path can be verified.")
         sys.exit(1)
-    if args.outcome == "pass" and feature:
+    if args.outcome == "pass" and feature and not args.quick_fix:
         artifact_errors = missing_required_artifacts(workspace_dir, feature)
         if artifact_errors:
             print("Error: cannot close session as pass before required artifacts exist.")
@@ -635,7 +707,9 @@ def main():
 
     total = len(features)
     passed = sum(1 for feat in features if bool(feat.get("passes")))
-    if feature and not bool(feature.get("passes")) and args.outcome in ("in-progress", "blocked"):
+    if args.quick_fix and feature and not bool(feature.get("passes")):
+        next_feature = feature
+    elif feature and not bool(feature.get("passes")) and args.outcome in ("in-progress", "blocked"):
         next_feature = feature
     else:
         next_feature = next_pending_feature(
@@ -647,7 +721,11 @@ def main():
     if file_task_progress:
         monthly = datetime.now().strftime("%Y-%m")
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        feature_token = safe_filename(task_store.display_label(feature) if feature else "session")
+        feature_token = (
+            safe_filename(f"quickfix-{quick_fix_title}", "quickfix")
+            if args.quick_fix
+            else safe_filename(task_store.display_label(feature) if feature else "session")
+        )
         session_log_path = workspace_dir / "task-harness" / "progress" / monthly / f"{stamp}-{feature_token}.md"
     elif (workspace_dir / "task-harness" / "index.json").exists():
         monthly = datetime.now().strftime("%Y-%m")
@@ -665,6 +743,8 @@ def main():
         passed=passed,
         next_feature=next_feature,
         qa_gate_status=qa_gate_status,
+        quick_fix=args.quick_fix,
+        quick_fix_title=quick_fix_title,
     )
     if file_task_progress:
         session_no = write_file_task_session_log(session_log_path, entry)
@@ -682,6 +762,8 @@ def main():
             next_feature=next_feature,
             log_path=session_log_path,
             qa_gate_status=qa_gate_status,
+            quick_fix=args.quick_fix,
+            quick_fix_title=quick_fix_title,
         )
         dump_text(snapshot_path, snapshot)
         print(f"Wrote session snapshot: {snapshot_path}")
@@ -696,6 +778,8 @@ def main():
             next_feature=next_feature,
             log_path=session_log_path,
             qa_gate_status=qa_gate_status,
+            quick_fix=args.quick_fix,
+            quick_fix_title=quick_fix_title,
         )
         dump_text(snapshot_path, snapshot)
         print(f"Updated latest snapshot: {snapshot_path}")
@@ -706,6 +790,8 @@ def main():
         outcome=args.outcome,
         context_mode=context_mode,
         qa_gate_status=qa_gate_status,
+        quick_fix=args.quick_fix,
+        quick_fix_title=quick_fix_title,
     )
     context_path, epoch = bump_session_context(
         workspace_dir=workspace_dir,
@@ -714,6 +800,8 @@ def main():
     )
 
     log_action = "Wrote" if file_task_progress else "Appended"
+    if args.quick_fix:
+        print(f"Quick fix close: {quick_fix_title}")
     print(f"{log_action} session log: {session_log_path} (session #{session_no})")
     print(f"Context mode: {context_mode}")
     print(f"Session context updated: {context_path} (epoch={epoch})")

@@ -37,10 +37,11 @@ LEGACY_TASK_FILE_NAME = "task.json"
 LEGACY_SESSION_CONTEXT_FILE_NAME = "session-context.json"
 LEGACY_SESSION_BOUNDARY_FILE_NAME = "session-boundary.json"
 LEGACY_TASK_CONTRACT_FILE_NAME = "TASK-HARNESS.md"
-LATEST_RUNTIME_VERSION = "2.6.0"
+LATEST_RUNTIME_VERSION = "2.6.1"
 DEFAULT_TASK_GLOBS = ("task-harness/tasks/*.json", "task-harness/tasks/**/*.json")
 RUNTIME_SCRIPT_NAMES = (
     "init.sh",
+    "quick_fix_classifier.py",
     "session_close.py",
     "ensure_task_branch.py",
     "task_switch.py",
@@ -146,6 +147,7 @@ MIGRATIONS: dict[str, tuple[str, str]] = {
     "2.3.10": ("2.4.0", "migrate_file_tasks_storage"),
     "2.4.0": ("2.5.0", "migrate_file_tasks_storage"),
     "2.5.0": ("2.6.0", "migrate_qa_gate_runtime"),
+    "2.6.0": ("2.6.1", "migrate_quick_fix_runtime"),
 }
 
 
@@ -701,6 +703,31 @@ def migrate_qa_gate_runtime(harness_dir: Path, dry_run: bool) -> dict[str, int]:
     return {"qa_gate_runtime": 0}
 
 
+def copy_sibling_runtime_script(harness_dir: Path, script_name: str, dry_run: bool) -> bool:
+    src = Path(__file__).resolve().parent / script_name
+    dst = harness_dir / "scripts" / script_name
+    if not src.exists():
+        return False
+    if src.resolve() == dst.resolve():
+        return False
+    if dry_run:
+        print(f"[dry-run] copy runtime script: {src} -> {dst}")
+        return True
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    dst.chmod(dst.stat().st_mode | 0o755)
+    return True
+
+
+def migrate_quick_fix_runtime(harness_dir: Path, dry_run: bool) -> dict[str, int]:
+    """Install quick-fix runtime scripts when using local fallback without a manifest."""
+    copied = 0
+    for script_name in ("quick_fix_classifier.py", "session_close.py", "update_runtime.py"):
+        if copy_sibling_runtime_script(harness_dir, script_name, dry_run):
+            copied += 1
+    return {"quick_fix_runtime": copied}
+
+
 def run_migration(step_name: str, harness_dir: Path, dry_run: bool) -> dict[str, int]:
     if step_name == "migrate_remove_branch_switching":
         return migrate_remove_branch_switching(harness_dir, dry_run)
@@ -710,6 +737,8 @@ def run_migration(step_name: str, harness_dir: Path, dry_run: bool) -> dict[str,
         return migrate_file_tasks_storage(harness_dir, dry_run)
     if step_name == "migrate_qa_gate_runtime":
         return migrate_qa_gate_runtime(harness_dir, dry_run)
+    if step_name == "migrate_quick_fix_runtime":
+        return migrate_quick_fix_runtime(harness_dir, dry_run)
     raise RuntimeError(f"未知迁移步骤：{step_name}")
 
 

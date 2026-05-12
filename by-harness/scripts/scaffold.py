@@ -17,7 +17,7 @@ from datetime import date
 from pathlib import Path
 
 HARNESS_DIR_NAME = ".harness"
-HARNESS_RUNTIME_VERSION = "2.6.0"
+HARNESS_RUNTIME_VERSION = "2.6.1"
 MANAGED_BLOCK_BEGIN = "<!-- BEGIN BY-HARNESS MANAGED BLOCK -->"
 MANAGED_BLOCK_END = "<!-- END BY-HARNESS MANAGED BLOCK -->"
 AGENT_DOC_ALIASES = {
@@ -273,6 +273,7 @@ def verify_outputs(target_dir: Path):
         f"{HARNESS_DIR_NAME}/config/task.json",
         f"{HARNESS_DIR_NAME}/task-harness/progress/latest.txt",
         f"{HARNESS_DIR_NAME}/scripts/session_close.py",
+        f"{HARNESS_DIR_NAME}/scripts/quick_fix_classifier.py",
         f"{HARNESS_DIR_NAME}/scripts/ensure_task_branch.py",
         f"{HARNESS_DIR_NAME}/scripts/task_switch.py",
         f"{HARNESS_DIR_NAME}/scripts/task_store.py",
@@ -372,6 +373,7 @@ def main():
     # Ship runtime helpers into initialized project
     for runtime_script in (
         "session_close.py",
+        "quick_fix_classifier.py",
         "ensure_task_branch.py",
         "task_switch.py",
         "task_store.py",
@@ -409,8 +411,9 @@ def main():
     print("  3. 选择 passes=false 的 feature，执行 plan/build/qa 闭环")
     print(f"  4. 单元测试、required QA Gate 通过且 spec/contract 已落盘后，才可更新 passes=true，并写入 {HARNESS_DIR_NAME}/task-harness/progress/YYYY-MM/*.md")
     print(f"  5. 会话结束执行：python3 {HARNESS_DIR_NAME}/scripts/session_close.py --target-dir . --feature-id <task-id> --outcome pass")
-    print(f"  6. 自动续跑下个任务（当前分支）：python3 {HARNESS_DIR_NAME}/scripts/task_switch.py continue --target-dir .")
-    print(f"  7. 配置并启用远程更新：编辑 {HARNESS_DIR_NAME}/config/update-policy.json")
+    print(f"  6. 快速修复初判：python3 {HARNESS_DIR_NAME}/scripts/quick_fix_classifier.py --target-dir . --prompt '<bug 描述>'")
+    print(f"  7. 自动续跑下个任务（当前分支）：python3 {HARNESS_DIR_NAME}/scripts/task_switch.py continue --target-dir .")
+    print(f"  8. 配置并启用远程更新：编辑 {HARNESS_DIR_NAME}/config/update-policy.json")
 
 
 if __name__ == "__main__":

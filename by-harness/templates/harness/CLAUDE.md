@@ -21,6 +21,7 @@
 | `/build` | “/build”, “按最新 spec 实现” | 读取 spec+contract，按范围实现并自检 | 代码改动 + 冲刺报告 |
 | `/qa` | “/qa”, “评估当前实现” | 读取 contract，执行 QA Gate 并逐条评分 | 结构化 QA 报告 + result JSON + 分数 |
 | `/sprint` | “/sprint 构建用户权限” | 依次执行 plan+contract+build+qa+fix | spec + contract + 实现 + 报告 |
+| `/quick-fix` | “/quick-fix 修一个明确小 bug” | 先运行 quick-fix 分类器；high 走轻量修复，medium 询问用户，low 回到 sprint | 代码改动 + 定向验证 + quick close 日志 |
 
 ## 执行契约
 
@@ -101,6 +102,42 @@
   - 保持当前 feature `passes=false`
   - 继续下一个 feature（不阻塞整体流程）
 
+### Quick Fix 契约
+
+Quick Fix 只适用于明确、小、可验证的 bug 修复。它压缩 spec/contract 前置工件，但不降低影响面判断、diff 复核和验证要求。
+
+进入前必须运行：
+
+```bash
+python3 .harness/scripts/quick_fix_classifier.py --target-dir . --prompt "<bug 描述>"
+```
+
+分流规则：
+- `confidence=high` 且 `recommended_mode=quick_fix`：可直接进入 quick-fix。
+- `confidence=medium` 或 `recommended_mode=ask_user`：先询问用户按 quick-fix 还是标准 sprint。
+- `confidence=low` 或 `recommended_mode=standard_feature`：必须走标准 `plan -> contract -> build -> qa`。
+
+Quick Fix 允许的范围：
+- 明确报错、空值保护、typo、日志级别、错误提示、单测/编译小修复。
+- 预计修改不超过 3 个文件，post-diff 变更不超过 100 行。
+- 不涉及 DB migration、权限/安全、计费、限流、缓存一致性、事务、幂等、外部 API、公共 DTO 或接口契约。
+
+Quick Fix 执行后必须复核：
+- 再运行 `quick_fix_classifier.py --phase post-diff`。
+- 若 post-diff 出现 risk_flags、文件数/行数超阈值或验证失败原因不明确，立即补 spec/contract 并升级为标准 sprint。
+- 通过后使用 quick close 记录证据：
+
+```bash
+python3 .harness/scripts/session_close.py \
+  --target-dir . \
+  --quick-fix \
+  --title "<bug 标题>" \
+  --outcome pass \
+  --note "<修改文件、验证命令和结果>"
+```
+
+Quick Fix 不得将 feature 的 `passes` 置为 `true`；如果需要完成某个 feature，仍必须满足 spec/contract/QA Gate 门禁。
+
 ## 操作规则
 
 - 先 spec 后代码。
@@ -112,6 +149,7 @@
   - `hard_new_session`：feature 收口后必须新开会话，未新开会话前不允许进入下一 feature。
 - 可用一条命令自动续跑下个任务（当前分支）：
   - `python3 .harness/scripts/task_switch.py continue --target-dir .`
+- 明确小 bug 可用 quick-fix 分流，但 quick-fix 只写日志，不绕过 feature 完成门禁。
 - 禁止隐式扩范围。
 - 如无必要，勿增实体；历史项目小改动优先最小成本实施。
 - 问题必须显式暴露并附证据。
@@ -135,6 +173,7 @@
 3. 单元测试通过、convention-check 无 fail、required QA Gate 通过，且 `spec_path` / `contract_path` 文件真实存在后，才可将该 feature 的 `passes` 置为 `true`
 4. 通过 `.harness/scripts/session_close.py` 写入 `.harness/task-harness/progress/YYYY-MM/<timestamp>-<feature-id>.md`
 5. 若达到 3 轮仍失败，保持 `passes=false` 并继续下一个任务
+6. quick-fix 只作为小修复旁路日志，写入 `.harness/task-harness/progress/YYYY-MM/<timestamp>-quickfix-<slug>.md`，不修改任务定义或 passes
 
 集成约束：
 - `AGENTS.md` 负责主闭环，不负责改任务定义
@@ -175,6 +214,7 @@
 - `/build`
 - `/qa`
 - `/sprint 在 dashboard 中增加组织切换器`
+- `/quick-fix 修复空指针报错`
 
 ## 技术栈
 
