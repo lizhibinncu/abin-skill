@@ -13,12 +13,16 @@ santong-skills/
 │   └── runtime/       # stable / beta 远程升级 manifest
 ├── by-tech-plan/      # 技术方案拷问、合成与评审模板
 │   └── SKILL.md
+├── api-transform-process-create/  # 百应 API Transformer 数据集成流程创建与开发
+│   ├── SKILL.md
+│   ├── agents/
+│   └── scripts/
 └── docs/              # 演示材料与静态 showcase（不属于 skill 运行时依赖）
 ```
 
 ## 使用方式
 
-- 需要某个技能时，让 Agent 直接使用对应 skill 名称，例如 `by-harness` 或 `by-tech-plan`。
+- 需要某个技能时，让 Agent 直接使用对应 skill 名称，例如 `by-harness`、`by-tech-plan` 或 `api-transform-process-create`。
 - 修改或排查技能行为时，先读对应 `SKILL.md`，再读脚本和模板；不要只按 README 推断执行细节。
 - `by-harness` 的脚本可以直接从本仓库运行，也可以由初始化后的目标仓库使用 `.harness/scripts/` 下发副本运行。
 
@@ -186,6 +190,43 @@ https://raw.githubusercontent.com/xmzDesign/santong-skill/main/by-harness/runtim
 `docs/examples/by-harness-by-tech-plan-demo.md` 展示了一个完整串联示例：先用 `by-tech-plan` 明确 LeadSpark 百应标签补充方案，再用 `by-harness` 拆成可执行任务。
 
 
+## api-transform-process-create
+
+`api-transform-process-create` 用来在百应 Planet 数据集成页面创建 API Transformer 流程，并按默认线性链路完成开发：
+
+```text
+接收数据 -> 数据转换 -> 发送数据 -> 结束
+```
+
+适用场景：
+
+- 新建数据集成计划、空白计划、流程或 workflow。
+- 通过目标客户公司 ID 精确选择客户，例如 `公司ID: 10317`。
+- 配置接收 URL 后缀、数据转换脚本、发送请求地址和结束节点脚本。
+- 在已有登录态的 Chrome 远程调试端口上，用脚本快速创建并保存草稿。
+
+常用命令：
+
+```bash
+node api-transform-process-create/scripts/create-default-flow.mjs \
+  --customer "10317" \
+  --flow-name "流程自动化测试" \
+  --screenshot "./data-integration-list.png"
+```
+
+如需只创建空白流程或调试单独开发阶段，分别使用：
+
+```bash
+node api-transform-process-create/scripts/create-process.mjs \
+  --customer "10317" \
+  --flow-name "流程自动化测试"
+
+node api-transform-process-create/scripts/develop-default-flow.mjs \
+  --workflow-id "28920" \
+  --receive-uri "abinliuchengceshi" \
+  --request-url "www.baidu.com"
+```
+
 
 ## 维护校验
 
@@ -199,6 +240,14 @@ python3 -m json.tool by-harness/runtime/beta/manifest.json >/dev/null
 ```
 
 如果改动了 manifest 中声明的文件，必须重新计算对应 `sha256`，并同步更新 stable / beta 两个 manifest。
+
+修改 `api-transform-process-create` 脚本后，至少执行：
+
+```bash
+node --check api-transform-process-create/scripts/create-default-flow.mjs
+node --check api-transform-process-create/scripts/create-process.mjs
+node --check api-transform-process-create/scripts/develop-default-flow.mjs
+```
 
 修改 README 时同步检查这些高漂移点：
 

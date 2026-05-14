@@ -1,0 +1,4 @@
+interface:
+  display_name: "API Transform Process Create"
+  short_description: "Create and develop BYAI flows"
+  default_prompt: "Use $api-transform-process-create to create and develop a BYAI data workflow for target customer 10317 named 流程自动化测试."
