@@ -38,6 +38,8 @@ node ~/.codex/skills/api-transform-process-create/scripts/create-default-flow.mj
 
 For default workflows, prefer `create-default-flow.mjs` over running separate create/develop scripts. Its default fast path creates a blank workflow by API, immediately writes the default graph by the draft API so the workflow becomes visible as `DRAFT`, returns directly to `https://sh.planet.byai.com/data-integration/`, and captures only the final list screenshot. It prints `Elapsed ms`; keep the happy path around 5 seconds when the list page and login session are already warm. Use `--ui-create` only as a fallback when API creation fails or the user specifically wants the visible `新建计划 -> 空白计划` path exercised.
 
+The editor's `自动布局` toolbar button is a frontend-only action (`#auto-layout`) and does not call a backend layout API. For default linear workflows, the bundled scripts write auto-layout-style node coordinates directly into the draft graph so the saved canvas is readable without opening the editor just to click the layout button.
+
 Create a blank workflow:
 
 ```bash
@@ -75,6 +77,13 @@ For a full default flow, use `create-default-flow.mjs`. Use the separate `create
 After the editor page opens, treat this as the real development stage.
 
 Fast path for a newly created default workflow: use `scripts/create-default-flow.mjs`. It keeps one CDP session, skips editor screenshots, looks up the exact company ID, calls `/api/transformers/apiworkflow/init` to create the blank workflow, calls `/api/transformers/apiworkflow/draft` to write the default graph and move the workflow from `INIT` to `DRAFT`, returns to the list page, and screenshots only the list.
+
+The draft graph positions should keep the simple chain visually separated, matching the editor's `自动布局` result:
+
+- `接收数据`: `{ x: 19910, y: 19518 }`
+- `数据转换`: `{ x: 19910, y: 19754 }`
+- `发送数据`: `{ x: 19910, y: 19936 }`
+- `结束`: `{ x: 19910, y: 20172 }`
 
 Fast path for an already open editor: use `scripts/develop-default-flow.mjs` for simple linear workflows. It writes the graph through `/bygw/api/transformers/apiworkflow/draft`, then verifies in the editor UI:
 

@@ -127,6 +127,14 @@ class CdpClient {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const DEFAULT_LAYOUT = {
+  x: 19910,
+  receiveY: 19518,
+  convertY: 19754,
+  senderY: 19936,
+  resultY: 20172,
+};
+
 async function getTarget(port) {
   const base = `http://127.0.0.1:${port}`;
   let targets;
@@ -219,9 +227,10 @@ function buildDefaultGraph(detail, args) {
       id: "defaultResult01",
       label: "结束",
       nodeType: "API_RESULT",
-      frontParams: { branches: ["默认"], position: { x: 19910, y: 20124 } },
+      frontParams: { branches: ["默认"], position: { x: DEFAULT_LAYOUT.x, y: DEFAULT_LAYOUT.resultY } },
     };
   const resultId = resultNode.id;
+  const resultBranches = resultNode.frontParams?.branches || ["默认"];
 
   return {
     edges: [
@@ -236,7 +245,7 @@ function buildDefaultGraph(detail, args) {
         label: "接收数据",
         name: "",
         nodeType: "API_RECEIVER",
-        frontParams: { branches: ["默认"], position: { x: 19910, y: 19518 } },
+        frontParams: { branches: ["默认"], position: { x: DEFAULT_LAYOUT.x, y: DEFAULT_LAYOUT.receiveY } },
         extra: {
           name: "接收数据-默认",
           urlPrefix: "https://open-tcs.byai.com/api/transformers/",
@@ -254,7 +263,7 @@ function buildDefaultGraph(detail, args) {
         label: "数据转换",
         name: "",
         nodeType: "DATA_CONVERT",
-        frontParams: { branches: ["默认"], position: { x: 19910, y: 19720 } },
+        frontParams: { branches: ["默认"], position: { x: DEFAULT_LAYOUT.x, y: DEFAULT_LAYOUT.convertY } },
         extra: { name: "数据转换-默认", convertScript: args.transformScript },
       },
       {
@@ -263,7 +272,7 @@ function buildDefaultGraph(detail, args) {
         label: "发送数据",
         name: "",
         nodeType: "API_SENDER",
-        frontParams: { branches: ["默认"], position: { x: 19910, y: 19922 } },
+        frontParams: { branches: ["默认"], position: { x: DEFAULT_LAYOUT.x, y: DEFAULT_LAYOUT.senderY } },
         extra: {
           name: "发送数据-默认",
           rpcProtocol: "http",
@@ -282,7 +291,7 @@ function buildDefaultGraph(detail, args) {
         label: "结束",
         name: "",
         nodeType: "API_RESULT",
-        frontParams: resultNode.frontParams || { branches: ["默认"], position: { x: 19910, y: 20124 } },
+        frontParams: { branches: resultBranches, position: { x: DEFAULT_LAYOUT.x, y: DEFAULT_LAYOUT.resultY } },
         extra: { name: "结束-默认", apiResultScript: args.endScript },
       },
     ],
@@ -300,7 +309,7 @@ function buildInitialGraph() {
         label: "接收数据",
         name: "",
         nodeType: "API_RECEIVER",
-        frontParams: { branches: ["默认"], position: { x: 19910, y: 19518 } },
+        frontParams: { branches: ["默认"], position: { x: DEFAULT_LAYOUT.x, y: DEFAULT_LAYOUT.receiveY } },
         extra: {},
       },
       {
@@ -309,7 +318,7 @@ function buildInitialGraph() {
         label: "结束",
         name: "",
         nodeType: "API_RESULT",
-        frontParams: { branches: ["默认"], position: { x: 19910, y: 20018 } },
+        frontParams: { branches: ["默认"], position: { x: DEFAULT_LAYOUT.x, y: DEFAULT_LAYOUT.resultY } },
         extra: {},
       },
     ],
