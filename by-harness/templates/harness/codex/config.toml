@@ -1,5 +1,0 @@
-# Harness Engineering Codex config
-# Codex discovers hooks from .codex/hooks.json in this repository.
-
-[features]
-codex_hooks = true

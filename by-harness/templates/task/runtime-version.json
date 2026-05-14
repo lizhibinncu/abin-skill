@@ -1,7 +1,0 @@
-{
-  "skill": "by-harness",
-  "runtime_version": "{{HARNESS_RUNTIME_VERSION}}",
-  "updated_at": "{{YYYY-MM-DD}}",
-  "updated_by": "scaffold.py",
-  "notes": "该文件用于版本化升级：update_runtime.py 会根据版本差异执行迁移脚本。"
-}
