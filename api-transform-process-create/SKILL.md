@@ -1,6 +1,6 @@
 ---
 name: api-transform-process-create
-description: Create and develop a BYAI API Transformer/data-integration workflow on https://sh.planet.byai.com/data-integration/. Use when the user asks to create a data integration plan, blank plan, workflow, flow, or process, then configure editor nodes such as 接收数据, 数据转换, 发送数据, 数据分流, or 结束 using customer ID, workflow name, receive URL suffix, transform script, request URL, and optional end script.
+description: Create and develop a BYAI API Transformer/data-integration workflow on https://sh.planet.byai.com/data-integration/. Use when the user asks to create a data integration plan, blank plan, workflow, flow, or process, then configure editor nodes such as 接收数据, 数据转换, 数据映射, 发送数据, 数据分流, 分支, or 结束 using customer ID, workflow name, receive URL suffix, transform script, HTTP/Dubbo request config, DBUtil scripts, branch conditions, request URL, and optional end script.
 ---
 
 # API Transform Process Create
@@ -20,8 +20,12 @@ Development inputs:
 
 - Receive URL suffix for the frontend-accessible callback path
 - Transform script for processing incoming data
-- Send/request URL for forwarding processed data
+- Send/request URL for forwarding processed data, or Dubbo service config
+- Optional data mapping config for named request objects such as Dubbo `req`
+- Optional data dispatch config: dispatch script, branch conditions, and branch-specific node chain
 - Optional end-node script; default to `return args` when no processing is needed
+
+For workflows that include `数据分流`, `数据映射`, Dubbo sender, database queries/writes, non-default receiver params, custom HTTP headers, retry, or exception result scripts, read `references/node-patterns.md` before editing the graph.
 
 ## Quick Start
 
@@ -39,6 +43,8 @@ node ~/.codex/skills/api-transform-process-create/scripts/create-default-flow.mj
 For default workflows, prefer `create-default-flow.mjs` over running separate create/develop scripts. Its default fast path creates a blank workflow by API, immediately writes the default graph by the draft API so the workflow becomes visible as `DRAFT`, returns directly to `https://sh.planet.byai.com/data-integration/`, and captures only the final list screenshot. It prints `Elapsed ms`; keep the happy path around 5 seconds when the list page and login session are already warm. Use `--ui-create` only as a fallback when API creation fails or the user specifically wants the visible `新建计划 -> 空白计划` path exercised.
 
 The editor's `自动布局` toolbar button is a frontend-only action (`#auto-layout`) and does not call a backend layout API. For default linear workflows, the bundled scripts write auto-layout-style node coordinates directly into the draft graph so the saved canvas is readable without opening the editor just to click the layout button.
+
+If a workflow contains `DATA_DISPATCH` or `DISPATCH_BRANCH`, do not click `自动布局`. It can make branch edges cross or curve awkwardly. Use manual branch-lane coordinates from `references/node-patterns.md`: keep the main spine centered, put branch nodes in one horizontal row, put each branch's child nodes under that branch, and put `结束` below the deepest branch.
 
 Create a blank workflow:
 
@@ -106,6 +112,16 @@ Use these defaults without asking:
 - `发送数据` timeout: `5秒`
 - `结束` node pass-through script: `return args`
 
+Complex development rules:
+
+- For a simple third-party HTTP callback, use `接收数据 -> 数据转换 -> 发送数据(HTTP) -> 结束`.
+- For a database lookup response, use `接收数据 -> 数据转换(DBUtil.selectObj/selectOne) -> 结束`.
+- For a database write side effect, usually put `DBUtil.insert/update` in a `数据转换` node after the relevant sender or branch.
+- For Dubbo calls, set `发送数据.extra.rpcProtocol` to `dubbo`, configure `dubboRegistry`, `serviceName`, `serviceInterface`, `serviceMethod`, and `serviceParameterTypes`; use `数据映射` before the sender when the Dubbo method expects a named object such as `req`.
+- For HTTP sender calls, set `rpcProtocol: "http"`, `path`, `method`, `mediaType`, `paramType`, `timeoutSecond`, `httpHeaderList`, and `httpHeaderTree`; use `autoRetry` and `retryNum` only when explicitly needed.
+- For `数据分流`, `dispatchParamScript` must return a map whose values used by branch rules are strings, such as `return ["send": args.send + ""]`. Create one `DISPATCH_BRANCH` node per rule and keep each branch node's `conditions` in sync with `DATA_DISPATCH.extra.dispatchJudgeList`.
+- For receiver typed params, keep `paramCheckList` and `paramTree` aligned. Param check scripts may set `$global` values for later nodes.
+
 Editor sequence:
 
 1. Configure `接收数据`.
@@ -128,27 +144,39 @@ Editor sequence:
    - Keep `发送参数类型` as `application/json`.
    - Set timeout to `5秒`.
    - Click `确定`.
-4. Configure `结束`.
+4. Add and configure optional complex nodes when requested.
+   - `数据映射`: set `mappingType: MANUAL`, `systemType: CUSTOM`, and `fieldMappingList` entries from source paths to target paths.
+   - `数据分流`: configure `dispatchParamScript`, branch rules, and one visible `DISPATCH_BRANCH` per rule.
+   - Dubbo `发送数据`: choose `Dubbo`, then fill registry, application/service name, interface, method, parameter names/types, and timeout.
+   - DB logic: put `DBUtil` read/write code in a `数据转换` or result/exception script as appropriate.
+5. Configure `结束`.
    - Connect `发送数据 -> 结束`.
    - Open `结束`.
    - Click `发送数据格式` / `编辑脚本`.
    - Enter the end-node script, usually `return args`.
    - Click script `确定`, then click the `结束` drawer `确定`.
-5. Verify the canvas shows the chain:
-   - `接收数据 -> 数据转换 -> 发送数据 -> 结束`
+6. Verify the canvas shows the expected chain:
+   - Simple chain: `接收数据 -> 数据转换 -> 发送数据 -> 结束`
+   - Dispatch graph: main spine plus horizontal branch row and branch lanes; do not click `自动布局`.
    - The `检查` indicator should be green when all required configuration is complete.
-6. Click `保存草稿` after the flow is configured, unless the user explicitly asks to publish or only inspect.
-7. Wait for the toast `保存草稿成功`.
-8. Return to `https://sh.planet.byai.com/data-integration/`. Prefer direct navigation for speed after the draft API save; use the editor's top-left `<` only when the user specifically asks to exercise the visible UI back action.
-9. Wait for the created row to appear in the list, then capture a screenshot and report the final list URL.
+7. Click `保存草稿` after the flow is configured, unless the user explicitly asks to publish or only inspect.
+8. Wait for the toast `保存草稿成功`.
+9. Return to `https://sh.planet.byai.com/data-integration/`. Prefer direct navigation for speed after the draft API save; use the editor's top-left `<` only when the user specifically asks to exercise the visible UI back action.
+10. Wait for the created row to appear in the list, then capture a screenshot and report the final list URL.
 
 ## Node Purposes
 
 - `接收数据`: Exposes the frontend callback/input endpoint. Configure the URL suffix and incoming content type.
 - `数据转换`: Runs custom script logic to process incoming `args`.
+- `数据映射`: Maps input paths into structured output paths, commonly before Dubbo senders.
 - `数据分流`: Branches processed data into multiple paths when conditional routing is needed. Skip it for a simple linear flow.
-- `发送数据`: Sends processed data to the configured request address.
+- `数据分流分支`: Represents one visible branch condition under `数据分流`; connect branch nodes to branch-specific child nodes or directly to `结束`.
+- `发送数据`: Sends processed data to a configured HTTP endpoint or Dubbo service.
 - `结束`: Processes or wraps the response from `发送数据`. Use `return args` for no extra handling.
+
+## Bundled References
+
+- `references/node-patterns.md`: graph JSON structures and examples for receiver params, transform scripts, DBUtil, data mapping, HTTP sender, Dubbo sender, data dispatch, branch nodes, result scripts, and manual branch layout.
 
 ## Browser Notes
 
