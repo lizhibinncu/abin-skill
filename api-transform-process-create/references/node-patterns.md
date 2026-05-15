@@ -22,6 +22,85 @@ Use this reference when creating or developing non-trivial BYAI API Transformer 
 - HTTP sender responses are wrapped as `{ "code": <http status>, "data": <response body> }`.
 - Dubbo sender responses are not wrapped; `args` is exactly the Dubbo return value.
 
+## Pipeline Architecture Mental Model
+
+Think of the visible graph nodes as configuration surfaces for three runtime pipelines plus the final response stage.
+
+### 接收请求 Pipeline (`API_RECEIVER`)
+
+This node receives the external HTTP request, loads the interface configuration, and builds the inbound `http server pipeline`.
+
+Typical stage order:
+
+```text
+接收请求 -> 获取接口配置/构造接收 pipeline -> 执行 pipeline
+-> 鉴权/验签 -> 参数解密 -> 参数校验 -> ... -> 结束 pipeline
+```
+
+Use this node for:
+
+- URL suffix, method, media type, and request parameter type.
+- Required-field and type definitions with `paramCheckList` / `paramTree`.
+- Receive-side credential or signature checks when available.
+- Decrypting request parameters before later nodes read them.
+- Writing small context values to `$global` during validation/check scripts when later nodes need stable request metadata.
+
+Avoid pushing receive-side auth/decrypt/required checks into a later `DATA_CONVERT` script unless the receiver UI/schema cannot express the rule. Late validation makes the flow harder to reason about because invalid requests have already entered the business transform stage.
+
+### 数据转换 Pipeline (`DATA_CONVERT` / `DATA_MAPPING` / `DATA_DISPATCH`)
+
+The transform pipeline receives the previous node output and loads transform configuration before running the transform strategy.
+
+Typical stage order:
+
+```text
+接收参数 -> 获取转换配置 -> 执行转换逻辑
+-> 常量/变量/脚本/映射/分流策略 -> 输出给下一节点
+```
+
+Use transform nodes for:
+
+- Normalizing customer input into a third-party or Dubbo request shape.
+- Computing constants and variables, including signature base strings or URI/header variables.
+- Scripted transforms for complex business logic.
+- DB/Redis lookups and writes (`DBUtil`, `RedisUtil`) when the workflow's business behavior requires them.
+- Manual field mapping before Dubbo or nested request objects.
+- Dispatching into branches when routing is based on transformed values.
+
+Keep each transform output explicit. Return the map that the next node should consume, or store cross-branch/cross-node context in `$global` with clear names.
+
+### 发起请求 Pipeline (`API_SENDER`)
+
+This node loads sender configuration, builds the outbound `webhook pipeline`, and sends the request.
+
+Typical stage order:
+
+```text
+获取接口配置/构造发送 pipeline -> 执行 pipeline
+-> 必要的数据转换 -> 添加鉴权信息 -> 参数加密
+-> 限流/重试/超时 -> 结束 pipeline -> 发起请求
+```
+
+Use this node for:
+
+- HTTP or Dubbo protocol selection and target config.
+- HTTP method, URL, media type, param type, headers, timeout, retry count, and retry script when supported.
+- Dubbo registry, application/service name, interface, method, and ordered parameter types.
+- Sender-side credential material such as auth headers/signature parameters.
+- Encryption or request wrapping that is specifically part of the outbound transport contract.
+
+When sender auth or encryption depends on business values, prepare the raw values in the upstream `DATA_CONVERT`, then let the sender node own the actual outbound credential/encryption behavior whenever the node schema supports it.
+
+### Node Execution Order And Context
+
+The graph edges define runtime order. Design the graph so a reader can follow data and context without opening every script:
+
+- Keep the main path visually and logically in execution order.
+- Use `$global` for context that must survive across non-adjacent nodes or branches, such as original phone, request ID, company-specific metadata, or values needed by a result script.
+- Prefer returned maps for direct parent-to-child data; use `$global` only when a value is genuinely shared across later nodes.
+- Do not rely on UI layout to imply runtime order. Edges are the source of truth.
+- For branch graphs, each branch lane should produce a value that the shared `结束` node can safely handle.
+
 ## Script Utilities
 
 Common imports used in examples:

@@ -27,6 +27,17 @@ Development inputs:
 
 For workflows that include `数据分流`, `数据映射`, Dubbo sender, database queries/writes, non-default receiver params, custom HTTP headers, retry, or exception result scripts, read `references/node-patterns.md` before editing the graph.
 
+## Architecture Mental Model
+
+Build workflows around the platform's three runtime pipelines:
+
+- `接收数据` is the HTTP server pipeline entry. Use it for receiving the request, loading the interface config, authentication/signature checks, parameter decrypt, parameter validation, and storing request context for later nodes.
+- `数据转换` is the business transform stage. Use it for constants, variable extraction, script-based normalization, DB/Redis lookups or writes, and reshaping data between nodes. Keep it focused on data logic rather than transport concerns.
+- `发送数据` is the outbound webhook/RPC pipeline. Use it for loading sender config, optional pre-send data transformation that belongs to the request, adding authentication information, parameter encryption, timeout, retry, rate-limit-related settings, and then sending HTTP/Dubbo requests.
+- `结束` is the final response stage. Use it to unwrap sender responses, map platform errors to customer-facing responses, or pass through `args`.
+
+Node execution is ordered by graph edges. Preserve context intentionally with `$global` or returned maps, keep each node's output shaped for the next node, and avoid hiding cross-node dependencies in unrelated scripts.
+
 ## Quick Start
 
 Prefer the bundled scripts when Chrome is already running with a remote debugging port and the user is logged in.
@@ -117,6 +128,8 @@ Complex development rules:
 - For a simple third-party HTTP callback, use `接收数据 -> 数据转换 -> 发送数据(HTTP) -> 结束`.
 - For a database lookup response, use `接收数据 -> 数据转换(DBUtil.selectObj/selectOne) -> 结束`.
 - For a database write side effect, usually put `DBUtil.insert/update` in a `数据转换` node after the relevant sender or branch.
+- Put receive-side auth/signature validation, decrypt, and required-field checks in `接收数据` when the platform fields/scripts can express them. Use `数据转换` for these only when the receive node cannot represent the required logic cleanly.
+- Put sender-side auth headers/signatures, request encryption, timeout, retry, and rate-limit-related settings in `发送数据`. Use the upstream `数据转换` only to prepare the business payload or URI/header variables that the sender consumes.
 - For Dubbo calls, set `发送数据.extra.rpcProtocol` to `dubbo`, configure `dubboRegistry`, `serviceName`, `serviceInterface`, `serviceMethod`, and `serviceParameterTypes`; use `数据映射` before the sender when the Dubbo method expects a named object such as `req`.
 - For HTTP sender calls, set `rpcProtocol: "http"`, `path`, `method`, `mediaType`, `paramType`, `timeoutSecond`, `httpHeaderList`, and `httpHeaderTree`; use `autoRetry` and `retryNum` only when explicitly needed.
 - For `数据分流`, `dispatchParamScript` must return a map whose values used by branch rules are strings, such as `return ["send": args.send + ""]`. Create one `DISPATCH_BRANCH` node per rule and keep each branch node's `conditions` in sync with `DATA_DISPATCH.extra.dispatchJudgeList`.
@@ -166,12 +179,12 @@ Editor sequence:
 
 ## Node Purposes
 
-- `接收数据`: Exposes the frontend callback/input endpoint. Configure the URL suffix and incoming content type.
-- `数据转换`: Runs custom script logic to process incoming `args`.
+- `接收数据`: Exposes the frontend callback/input endpoint. Configure the URL suffix, incoming content type, receive-side authentication, decrypt, parameter validation, and context capture.
+- `数据转换`: Runs business data logic on incoming `args`: constants, variable extraction, script transforms, DB/Redis reads/writes, and payload reshaping.
 - `数据映射`: Maps input paths into structured output paths, commonly before Dubbo senders.
 - `数据分流`: Branches processed data into multiple paths when conditional routing is needed. Skip it for a simple linear flow.
 - `数据分流分支`: Represents one visible branch condition under `数据分流`; connect branch nodes to branch-specific child nodes or directly to `结束`.
-- `发送数据`: Sends processed data to a configured HTTP endpoint or Dubbo service.
+- `发送数据`: Runs the outbound request pipeline for HTTP or Dubbo: sender config, auth/header additions, encryption, timeout/retry/limit settings, and actual request dispatch.
 - `结束`: Processes or wraps the response from `发送数据`. Use `return args` for no extra handling.
 
 ## Bundled References
