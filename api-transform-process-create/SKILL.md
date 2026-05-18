@@ -9,6 +9,8 @@ description: Create and develop a BYAI API Transformer/data-integration workflow
 
 Create a blank data-integration workflow in BYAI Planet, then optionally develop the workflow in the editor.
 
+Also use this skill when modifying an existing workflow to match another workflow's content. In that copy-update case, preserve the target workflow identity and callback URL by default: keep the target `workflowId`, `workflowName`, `companyId`, `companyName`, and the target `API_RECEIVER.extra.uri` / `urlPrefix` unless the user explicitly asks to overwrite the receiver URL.
+
 Creation inputs:
 
 - Target customer value, usually a company/customer ID such as `10317`
@@ -26,6 +28,8 @@ Development inputs:
 - Optional end-node script; default to `return args` when no processing is needed
 
 For workflows that include `数据分流`, `数据映射`, Dubbo sender, database queries/writes, non-default receiver params, custom HTTP headers, retry, or exception result scripts, read `references/node-patterns.md` before editing the graph.
+
+Publishing rule: when creating a new workflow or a new default graph, save as draft unless the user explicitly asks to publish. For existing published workflows that the user explicitly asks to modify in place, the draft API may reject with `流程当前状态[PUBLISHED]不允许保存草稿`; in that case use the publish/update API only for the requested in-place update.
 
 ## Architecture Mental Model
 
@@ -75,6 +79,15 @@ node ~/.codex/skills/api-transform-process-create/scripts/develop-default-flow.m
   --screenshot "./data-integration-list.png"
 ```
 
+Copy one existing workflow's graph into another existing workflow while preserving the target receiver URL:
+
+```bash
+node ~/.codex/skills/api-transform-process-create/scripts/copy-workflow-graph.mjs \
+  --source-workflow-id "23820" \
+  --target-workflow-id "27020" \
+  --screenshot "./data-integration-list.png"
+```
+
 For a full default flow, use `create-default-flow.mjs`. Use the separate `create-process.mjs` and `develop-default-flow.mjs` scripts only when debugging a single stage or when the user explicitly wants to stop on the editor page.
 
 ## Create Workflow
@@ -93,7 +106,7 @@ For a full default flow, use `create-default-flow.mjs`. Use the separate `create
 
 After the editor page opens, treat this as the real development stage.
 
-Fast path for a newly created default workflow: use `scripts/create-default-flow.mjs`. It keeps one CDP session, skips editor screenshots, looks up the exact company ID, calls `/api/transformers/apiworkflow/init` to create the blank workflow, calls `/api/transformers/apiworkflow/draft` to write the default graph and move the workflow from `INIT` to `DRAFT`, returns to the list page, and screenshots only the list.
+Fast path for a newly created default workflow: use `scripts/create-default-flow.mjs`. It keeps one CDP session, skips editor screenshots, looks up the exact company ID, calls `/api/transformers/apiworkflow/init` to create the blank workflow, calls `/api/transformers/apiworkflow/draft` to write the default graph and move the workflow from `INIT` to `DRAFT`, returns to the list page, and screenshots only the list. This is the default behavior for new workflows unless the user explicitly asks to publish.
 
 The draft graph positions should keep the simple chain visually separated, matching the editor's `自动布局` result:
 
@@ -176,6 +189,22 @@ Editor sequence:
 8. Wait for the toast `保存草稿成功`.
 9. Return to `https://sh.planet.byai.com/data-integration/`. Prefer direct navigation for speed after the draft API save; use the editor's top-left `<` only when the user specifically asks to exercise the visible UI back action.
 10. Wait for the created row to appear in the list, then capture a screenshot and report the final list URL.
+
+## Copy Or Update From Existing Workflow
+
+When the user asks to make workflow `<target>` the same as workflow `<source>`, prefer `scripts/copy-workflow-graph.mjs`.
+
+Default copy behavior:
+
+- Load both workflow details from `/api/transformers/apiworkflow/detail`.
+- Build the update payload with the target workflow's `workflowName`, `companyId`, `companyName`, and `workflowId`.
+- Copy the source `graph` into the target.
+- Preserve the target receiver URL by default. For each `API_RECEIVER` node, keep the target node's `extra.uri` and `extra.urlPrefix`; do not copy the source callback suffix unless the user explicitly asks for that and accepts URL uniqueness risk.
+- Save with `/api/transformers/apiworkflow/draft` first for draft/created targets.
+- If the target is already `PUBLISHED` and the draft API rejects because published workflows cannot save drafts, use `/api/transformers/apiworkflow/update` for the requested in-place update.
+- Verify the target detail after saving. The target graph should equal the source graph after applying the expected receiver URL preservation.
+
+If the update API rejects with a duplicate receiver URL message, re-check that the target receiver URL was preserved. The platform requires receiver callback paths to be unique across workflows.
 
 ## Node Purposes
 
